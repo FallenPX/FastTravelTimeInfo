@@ -75,7 +75,8 @@ namespace FTI::Menu
 			for (auto& field : g_textFields) {
 				const auto& value = a_settings.*(field.member);
 				field.buffer.fill('\0');
-				std::memcpy(field.buffer.data(), value.data(), std::min(value.size(), field.buffer.size() - 1));
+				// (std::min) in brackets: <windows.h> may define a min() macro.
+				std::memcpy(field.buffer.data(), value.data(), (std::min)(value.size(), field.buffer.size() - 1));
 			}
 			g_seedBuffer = a_settings.seedSpeed;
 		}
