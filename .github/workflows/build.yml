@@ -32,11 +32,7 @@ jobs:
       - name: Assemble mod folder
         shell: pwsh
         run: |
-          $dll = Get-ChildItem -Path build -Recurse -Filter FastTravelTimeInfo.dll | Select-Object -First 1
-          if (-not $dll) { Write-Error "FastTravelTimeInfo.dll was not produced"; exit 1 }
-          New-Item -ItemType Directory -Force -Path mod/SKSE/Plugins | Out-Null
-          Copy-Item $dll.FullName mod/SKSE/Plugins/
-          Copy-Item dist/SKSE/Plugins/FastTravelTimeInfo.ini mod/SKSE/Plugins/
+          ./tools/package.ps1
           Get-ChildItem -Recurse mod | Format-Table FullName, Length
 
       - name: Upload mod
