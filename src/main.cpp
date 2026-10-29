@@ -2,15 +2,28 @@
 
 #include "Estimator.h"
 #include "MapMenuHook.h"
+#include "Menu.h"
 #include "Settings.h"
 
 namespace
 {
 	void OnSKSEMessage(SKSE::MessagingInterface::Message* a_message)
 	{
-		if (a_message && a_message->type == SKSE::MessagingInterface::kDataLoaded) {
+		if (!a_message) {
+			return;
+		}
+		switch (a_message->type) {
+		case SKSE::MessagingInterface::kPostLoad:
+			// Every SKSE plugin is loaded by now, so the optional SKSE Menu Framework
+			// can be found regardless of plugin load order.
+			FTI::Menu::Register();
+			break;
+		case SKSE::MessagingInterface::kDataLoaded:
 			FTI::Estimator::Get().LoadCalibration();
 			FTI::MapMenuHook::Install();
+			break;
+		default:
+			break;
 		}
 	}
 }
@@ -25,10 +38,10 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
 		return true;
 	}
 
-	FTI::Settings::Get().Load();
-	if (!FTI::Settings::Get().enabled) {
-		logs::info("Disabled in the INI (bEnabled=0)");
-		return true;
+	// bEnabled is checked live, so it can also be switched on and off from the in-game menu.
+	FTI::Settings::Reload();
+	if (!FTI::Settings::Current()->enabled) {
+		logs::info("Display is switched off in the INI (bEnabled=0)");
 	}
 
 	const auto messaging = SKSE::GetMessagingInterface();

@@ -35,6 +35,8 @@ namespace FTI::MapMenuHook
 			std::string                 title;
 			std::vector<Line>           lines;    // our rows for the current marker
 			std::optional<RE::NiPoint3> destPos;  // current marker position (for calibration)
+			std::vector<std::string>    staleItems;  // labels used earlier for this marker
+			std::uint32_t               settingsVersion{ 0 };
 			int                         failedApplies{ 0 };
 			bool                        tripArmed{ false };
 			bool                        warnedNoDescription{ false };
@@ -146,10 +148,15 @@ namespace FTI::MapMenuHook
 			return a_description.IsObject() && a_description.Invoke("SetDescription", nullptr, args.data(), args.size());
 		}
 
-		bool IsOurLabel(const std::string& a_item)
+		// Rows we added: current labels, plus labels used earlier for this marker (in case the
+		// settings changed while the flyout was showing). Caller holds g_stateLock.
+		bool IsOurLabel(const Settings& a_settings, const std::string& a_item)
 		{
-			const auto& s = Settings::Get();
-			return a_item == s.travelLabel || a_item == s.arrivalLabel || (s.showDistance && a_item == s.distanceLabel);
+			if (a_item == a_settings.travelLabel || a_item == a_settings.arrivalLabel || a_item == a_settings.distanceLabel) {
+				return true;
+			}
+			const auto matches = [&](const auto& a_line) { return a_line.item == a_item; };
+			return std::ranges::any_of(g_state.lines, matches) || std::ranges::find(g_state.staleItems, a_item) != g_state.staleItems.end();
 		}
 
 		// ---- Game-side helpers
@@ -218,10 +225,11 @@ namespace FTI::MapMenuHook
 			return std::nullopt;
 		}
 
-		void ComputeLines(const RE::MapMenu::RUNTIME_DATA2& a_data, std::int32_t a_selected, const std::string& a_title)
+		void ComputeLines(const Settings& settings, const RE::MapMenu::RUNTIME_DATA2& a_data, std::int32_t a_selected, const std::string& a_title)
 		{
-			const auto& settings = Settings::Get();
-
+			if (!settings.enabled) {
+				return;
+			}
 			const auto* marker = ResolveMarker(a_data.mapMarkers, a_selected, a_title);
 			if (!marker) {
 				return;
@@ -273,7 +281,7 @@ namespace FTI::MapMenuHook
 
 		void Update(RE::MapMenu* a_menu)
 		{
-			if (!Settings::Get().enabled || REL::Module::IsVR()) {
+			if (REL::Module::IsVR()) {
 				return;
 			}
 			auto* data = a_menu->GetRuntimeData2();
@@ -282,21 +290,36 @@ namespace FTI::MapMenuHook
 				return;
 			}
 
+			const auto settings = Settings::Current();
+
 			std::lock_guard guard{ g_stateLock };
 
 			if (g_resetRequested.exchange(false)) {
 				const bool warned = g_state.warnedNoDescription;
 				g_state = HoverState{};
 				g_state.warnedNoDescription = warned;
+				g_state.settingsVersion = Settings::Version();
 			}
 
-			TryArmTrip(*data);
+			// Settings changed (in-game menu)? Recompute, and remember the old labels so the
+			// rows they produced can be removed.
+			const auto version = Settings::Version();
+			const bool settingsChanged = version != g_state.settingsVersion;
+			g_state.settingsVersion = version;
+
+			if (!settings->enabled && !settingsChanged && g_state.lines.empty() && g_state.staleItems.empty()) {
+				return;  // switched off and nothing of ours left on screen
+			}
+			if (settings->enabled) {
+				TryArmTrip(*data);
+			}
 
 			const auto selected = data->selectedMarker;
 			if (selected < 0) {
 				g_state.selected = -1;
 				g_state.title.clear();
 				g_state.lines.clear();
+				g_state.staleItems.clear();
 				return;
 			}
 
@@ -319,19 +342,29 @@ namespace FTI::MapMenuHook
 			}
 
 			if (selected != g_state.selected || title != g_state.title) {
+				// New marker: the game has redrawn the flyout, so nothing of ours is on it.
 				g_state.selected = selected;
 				g_state.title = title;
 				g_state.lines.clear();
+				g_state.staleItems.clear();
 				g_state.destPos.reset();
 				g_state.failedApplies = 0;
-				ComputeLines(*data, selected, title);
+				ComputeLines(*settings, *data, selected, title);
+			} else if (settingsChanged) {
+				for (const auto& line : g_state.lines) {
+					g_state.staleItems.push_back(line.item);
+				}
+				g_state.lines.clear();
+				g_state.destPos.reset();
+				g_state.failedApplies = 0;
+				ComputeLines(*settings, *data, selected, title);
 			}
 
 			// Compare what the flyout shows with what it should show.
 			const auto        visible = ReadVisibleLines(description);
 			std::vector<Line> foreign;
 			for (const auto& line : visible) {
-				if (!IsOurLabel(line.item)) {
+				if (!IsOurLabel(*settings, line.item)) {
 					foreign.push_back(line);
 				}
 			}

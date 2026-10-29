@@ -1,0 +1,2 @@
+dc9182454556910b2fd873d770c345cfe6e53777 Mon Sep 28 21:13:41 2026 -0300
+Source: https://github.com/QTR-Modding/SKSE-Menu-Framework-3/blob/master/resources/SKSEMenuFramework.h

@@ -1,13 +1,11 @@
 -- Fast Travel Time Info - SKSE plugin for Skyrim SE/AE
 -- Build: the GitHub workflow in .github/workflows/build.yml does everything.
--- Local build (Windows, Visual Studio 2022 + xmake 3.x):
---   git clone --depth 1 --branch v15.0.1 --recurse-submodules --shallow-submodules https://github.com/alandtse/CommonLibSSE-NG.git lib/commonlibsse-ng
---   xmake config -m releasedbg --yes
---   xmake build --yes
+-- Local build (Windows, Visual Studio Build Tools 2022/2026 with C++ + Git + xmake 3.x):
+--   double-click build.bat (see README.md)
 set_xmakever("3.0.0")
 
 set_project("FastTravelTimeInfo")
-set_version("1.0.0")
+set_version("0.1.0")
 set_license("GPL-3.0")
 set_arch("x64")
 set_languages("c++23")
@@ -37,4 +35,9 @@ target("FastTravelTimeInfo", function()
     add_headerfiles("src/**.h")
     add_includedirs("src")
     set_pcxxheader("src/pch.h")
+
+    -- Optional SKSE Menu Framework support (header only; the framework is looked up at
+    -- runtime, so it is never a requirement). Its header still uses <codecvt>.
+    add_includedirs("extern/SKSEMenuFramework")
+    add_defines("_SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING")
 end)

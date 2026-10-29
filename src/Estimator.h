@@ -9,6 +9,12 @@ namespace FTI
 		bool   calibrated{ false };
 	};
 
+	struct CalibrationStatus
+	{
+		double      speed{ 0.0 };  // game units per real-time second currently in use
+		std::size_t samples{ 0 };  // learned trips behind it (0 = still the INI starting guess)
+	};
+
 	// Estimates fast-travel duration from straight-line distance, the game setting
 	// fFastTravelSpeedMult and the TimeScale global:
 	//
@@ -34,6 +40,10 @@ namespace FTI
 		void ArmTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to);
 		// Called when the game reports the end of a fast travel.
 		void OnFastTravelEnd(float a_hours);
+
+		// Forgets every learned trip and deletes the calibration file.
+		void ResetCalibration();
+		[[nodiscard]] CalibrationStatus GetStatus() const;
 
 	private:
 		[[nodiscard]] double SpeedLocked() const;

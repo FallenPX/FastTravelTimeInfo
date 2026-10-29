@@ -10,7 +10,11 @@
 #include <cmath>
 #include <deque>
 #include <filesystem>
+#include <format>
 #include <fstream>
+#include <functional>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>

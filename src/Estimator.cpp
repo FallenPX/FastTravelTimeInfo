@@ -118,7 +118,7 @@ namespace FTI
 		{
 			const int hour = a_minuteOfDay / 60;
 			const int minute = a_minuteOfDay % 60;
-			if (Settings::Get().use24HourClock) {
+			if (Settings::Current()->use24HourClock) {
 				return std::format("{:02}:{:02}", hour, minute);
 			}
 			const int hour12 = hour % 12 == 0 ? 12 : hour % 12;
@@ -161,7 +161,7 @@ namespace FTI
 		}
 		std::ifstream file{ *path };
 		if (!file) {
-			logs::info("No calibration yet; using seed speed {}", Settings::Get().seedSpeed);
+			logs::info("No calibration yet; using seed speed {}", Settings::Current()->seedSpeed);
 			return;
 		}
 		std::string line;
@@ -201,10 +201,28 @@ namespace FTI
 		}
 	}
 
+	void Estimator::ResetCalibration()
+	{
+		std::lock_guard guard{ _lock };
+		_samples.clear();
+		_pending.reset();
+		if (const auto path = CalibrationPath()) {
+			std::error_code ec;
+			std::filesystem::remove(*path, ec);
+		}
+		logs::info("Calibration reset");
+	}
+
+	CalibrationStatus Estimator::GetStatus() const
+	{
+		std::lock_guard guard{ _lock };
+		return CalibrationStatus{ SpeedLocked(), _samples.size() };
+	}
+
 	double Estimator::SpeedLocked() const
 	{
 		if (_samples.empty()) {
-			return Settings::Get().seedSpeed;
+			return Settings::Current()->seedSpeed;
 		}
 		std::vector<double> sorted(_samples.begin(), _samples.end());
 		std::ranges::sort(sorted);
@@ -249,7 +267,7 @@ namespace FTI
 
 		logs::info("Fast travel ended: game reports {:.3f} h", a_hours);
 
-		if (!Settings::Get().autoCalibrate) {
+		if (!Settings::Current()->autoCalibrate) {
 			return;
 		}
 		if (std::chrono::steady_clock::now() - trip.armedAt > PENDING_TIMEOUT) {
@@ -292,7 +310,8 @@ namespace FTI
 
 	std::string FormatDuration(double a_hours, bool a_approx)
 	{
-		const auto& s = Settings::Get();
+		const auto  settings = Settings::Current();
+		const auto& s = *settings;
 		const auto  totalMinutes = std::max<long long>(1, std::llround(a_hours * 60.0));
 		const auto  days = totalMinutes / 1440;
 		const auto  hours = (totalMinutes % 1440) / 60;
@@ -347,7 +366,8 @@ namespace FTI
 			}
 		}
 
-		const auto& s = Settings::Get();
+		const auto  settings = Settings::Current();
+		const auto& s = *settings;
 		std::string out = std::format("{}, {}", DayName(static_cast<std::uint32_t>((dayOfWeek + daysForward) % 7)), ClockString(minuteOfDay));
 		if (s.showArrivalDate) {
 			out += std::format(", {}{}{}{}", day, OrdinalSuffix(day), s.monthJoiner, MonthName(month));
