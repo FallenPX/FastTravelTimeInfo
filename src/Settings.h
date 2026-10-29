@@ -16,6 +16,7 @@ namespace FTI
 		bool  onlyFastTravelMarkers{ true };
 		bool  autoCalibrate{ true };
 		float seedSpeed{ 80.0f };  // game units per real-time second, used until calibrated
+		int   lineSpacing{ 100 };  // flyout line spacing, percent of the game's own (100 = unchanged)
 
 		std::string travelLabel{ "Travel time" };
 		std::string arrivalLabel{ "Arrival" };
@@ -28,6 +29,8 @@ namespace FTI
 
 		static constexpr float MIN_SEED_SPEED = 1.0f;
 		static constexpr float MAX_SEED_SPEED = 10000.0f;
+		static constexpr int   MIN_LINE_SPACING = 50;
+		static constexpr int   MAX_LINE_SPACING = 150;
 
 		// The settings currently in use. Cheap; safe to call from any thread.
 		[[nodiscard]] static std::shared_ptr<const Settings> Current();

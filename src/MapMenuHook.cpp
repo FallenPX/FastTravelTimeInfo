@@ -123,6 +123,65 @@ namespace FTI::MapMenuHook
 			return out;
 		}
 
+		bool GetNumber(const RE::GFxValue& a_obj, const char* a_name, double& a_out)
+		{
+			RE::GFxValue value;
+			if (!GetMember(a_obj, a_name, value) || !value.IsNumber()) {
+				return false;
+			}
+			a_out = value.GetNumber();
+			return std::isfinite(a_out);
+		}
+
+		// Re-stacks the flyout's title and visible rows with a custom line spacing.
+		// Mirrors the vanilla Map.MarkerDescription.SetDescription layout: each element is
+		// placed below the previous one by its own height (here scaled by a_factor), and the
+		// block is centred vertically on the marker. Only writes positions that differ, so
+		// calling it every frame is cheap.
+		void ApplySpacing(const RE::GFxValue& a_description, double a_factor)
+		{
+			struct Element
+			{
+				RE::GFxValue clip;
+				double       height;
+			};
+			std::vector<Element> elements;
+
+			RE::GFxValue title;
+			double       height = 0.0;
+			if (GetMember(a_description, "Title", title) && !ReadText(title).empty() && GetNumber(title, "_height", height)) {
+				elements.push_back({ title, height });
+			}
+			RE::GFxValue list;
+			if (GetMember(a_description, "DescriptionList", list) && list.IsArray()) {
+				const auto size = list.GetArraySize();
+				for (std::uint32_t i = 0; i < size; ++i) {
+					RE::GFxValue entry;
+					RE::GFxValue visible;
+					if (list.GetElement(i, &entry) && GetMember(entry, "_visible", visible) && visible.IsBool() &&
+						visible.GetBool() && GetNumber(entry, "_height", height)) {
+						elements.push_back({ entry, height });
+					}
+				}
+			}
+			if (elements.size() < 2) {
+				return;  // nothing to space out
+			}
+
+			double total = 0.0;
+			for (const auto& element : elements) {
+				total += element.height * a_factor;
+			}
+			double y = -total / 2.0;
+			for (auto& element : elements) {
+				double current = 0.0;
+				if (!GetNumber(element.clip, "_y", current) || std::abs(current - y) > 0.25) {
+					element.clip.SetMember("_y", RE::GFxValue(y));
+				}
+				y += element.height * a_factor;
+			}
+		}
+
 		bool ApplyLines(RE::GFxMovieView* a_movie, RE::GFxValue& a_description, const std::string& a_title, const std::vector<Line>& a_lines)
 		{
 			std::array<RE::GFxValue, 2> args;
@@ -371,19 +430,21 @@ namespace FTI::MapMenuHook
 			auto wanted = foreign;
 			wanted.insert(wanted.end(), g_state.lines.begin(), g_state.lines.end());
 
-			if (visible == wanted) {
-				return;
-			}
-			if (g_state.failedApplies >= MAX_FAILED_APPLIES) {
-				return;  // the flyout does not take our rows; stop retrying for this marker
-			}
 			// Re-check straight away: if the game later overwrites the flyout we simply
 			// re-apply next frame, but if SetDescription itself does not produce our rows
 			// (a replaced map.swf, say) we give up after a few tries instead of looping.
-			if (ApplyLines(movie, description, title, wanted) && ReadVisibleLines(description) == wanted) {
-				g_state.failedApplies = 0;
-			} else if (++g_state.failedApplies == MAX_FAILED_APPLIES) {
-				logs::warn("Could not add rows to the flyout for \"{}\"", title);
+			if (visible != wanted && g_state.failedApplies < MAX_FAILED_APPLIES) {
+				if (ApplyLines(movie, description, title, wanted) && ReadVisibleLines(description) == wanted) {
+					g_state.failedApplies = 0;
+				} else if (++g_state.failedApplies == MAX_FAILED_APPLIES) {
+					logs::warn("Could not add rows to the flyout for \"{}\"", title);
+				}
+			}
+
+			// Custom line spacing (100% = leave the game's layout alone). SetDescription resets
+			// the layout whenever it runs, so this is re-checked every frame.
+			if (settings->enabled && settings->lineSpacing != 100) {
+				ApplySpacing(description, settings->lineSpacing / 100.0);
 			}
 		}
 

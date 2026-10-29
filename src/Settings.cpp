@@ -107,6 +107,21 @@ namespace FTI
 			};
 		}
 
+		Field MakeLineSpacing()
+		{
+			return Field{
+				"iLineSpacing", "General",
+				[](Settings& a_s, const std::string& a_v) {
+					try {
+						const auto v = static_cast<int>(std::lround(std::stod(a_v)));
+						a_s.lineSpacing = std::clamp(v, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING);
+					} catch (...) {
+					}
+				},
+				[](const Settings& a_s) { return std::to_string(a_s.lineSpacing); }
+			};
+		}
+
 		// a_required: an empty value is ignored (row labels must not be empty, or the plugin
 		// could not tell its own rows apart from the game's).
 		Field MakeString(std::string_view a_name, std::string Settings::* a_member, bool a_required = false)
@@ -129,6 +144,7 @@ namespace FTI
 				MakeBool("bUse24HourClock", &Settings::use24HourClock),
 				MakeBool("bShowArrivalDate", &Settings::showArrivalDate),
 				MakeBool("bShowDistance", &Settings::showDistance),
+				MakeLineSpacing(),
 				MakeBool("bOnlyFastTravelMarkers", &Settings::onlyFastTravelMarkers),
 				MakeBool("bAutoCalibrate", &Settings::autoCalibrate),
 				MakeSeedSpeed(),
@@ -276,8 +292,8 @@ namespace FTI
 				}
 			}
 		}
-		logs::info("Settings: enabled={} 24h={} date={} distance={} onlyFT={} autoCalibrate={} seedSpeed={}",
-			result.enabled, result.use24HourClock, result.showArrivalDate, result.showDistance,
+		logs::info("Settings: enabled={} 24h={} date={} distance={} lineSpacing={}% onlyFT={} autoCalibrate={} seedSpeed={}",
+			result.enabled, result.use24HourClock, result.showArrivalDate, result.showDistance, result.lineSpacing,
 			result.onlyFastTravelMarkers, result.autoCalibrate, result.seedSpeed);
 		return result;
 	}

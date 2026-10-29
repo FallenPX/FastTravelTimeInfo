@@ -52,6 +52,7 @@ namespace FTI::Menu
 		} };
 
 		float         g_seedBuffer{ 80.0f };
+		int           g_spacingBuffer{ 100 };
 		std::uint32_t g_syncedVersion{ 0 };
 		bool          g_confirmReset{ false };
 		std::string   g_message;
@@ -79,6 +80,7 @@ namespace FTI::Menu
 				std::memcpy(field.buffer.data(), value.data(), (std::min)(value.size(), field.buffer.size() - 1));
 			}
 			g_seedBuffer = a_settings.seedSpeed;
+			g_spacingBuffer = a_settings.lineSpacing;
 		}
 
 		std::string Sanitize(const char* a_text)
@@ -129,6 +131,22 @@ namespace FTI::Menu
 			Toggle("Show the date on the arrival line", "e.g. \"Tirdas, 16:45, 18th of Last Seed\".", a_s, &Settings::showArrivalDate);
 			Toggle("Show straight-line distance", "Adds a distance row in metres or kilometres.", a_s, &Settings::showDistance);
 			Toggle("Only on markers you can fast travel to", "Off: also show estimates on undiscovered locations.", a_s, &Settings::onlyFastTravelMarkers);
+
+			ImGuiMCP::SetNextItemWidth(220.0f);
+			ImGuiMCP::SliderInt("Line spacing", &g_spacingBuffer, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING, "%d%%");
+			const bool spacingCommitted = ImGuiMCP::IsItemDeactivatedAfterEdit();
+			Tooltip("Spacing between the location name and the rows below it, in percent of the game's own. 100% = unchanged, lower = tighter. Ctrl+click to type a value.");
+			if (spacingCommitted) {
+				Settings next = a_s;
+				next.lineSpacing = std::clamp(g_spacingBuffer, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING);
+				Commit(std::move(next));
+			}
+			ImGuiMCP::SameLine();
+			if (ImGuiMCP::Button("Default##spacing")) {
+				Settings next = a_s;
+				next.lineSpacing = 100;
+				Commit(std::move(next));
+			}
 			ImGuiMCP::EndDisabled();
 		}
 
