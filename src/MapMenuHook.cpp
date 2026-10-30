@@ -40,6 +40,16 @@ namespace FTI::MapMenuHook
 			int                         failedApplies{ 0 };
 			bool                        tripArmed{ false };
 			bool                        warnedNoDescription{ false };
+			bool                        warnedNoBackground{ false };
+
+			struct BackgroundShape
+			{
+				double x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };
+				int    opacity{ 0 };
+
+				bool operator==(const BackgroundShape&) const = default;
+			};
+			std::optional<BackgroundShape> background;  // what is currently drawn, if anything
 		};
 
 		std::recursive_mutex g_stateLock;  // guards g_state (AdvanceMovie and menu events)
@@ -180,6 +190,215 @@ namespace FTI::MapMenuHook
 				}
 				y += element.height * a_factor;
 			}
+		}
+
+		// ---- Optional translucent background behind the flyout text
+		//
+		// An empty movie clip is created inside the flyout at depth -16384, below everything the
+		// Flash file itself places (SkyUI uses the same trick for its widget layer), and a filled
+		// rounded rectangle is drawn into it with the AS2 drawing API. Being a child of the
+		// flyout, it moves and fades in and out together with it.
+
+		constexpr auto   BACKGROUND_NAME = "FTIBackground";
+		constexpr int    BACKGROUND_DEPTH = -16384;
+		constexpr double BACKGROUND_PAD_X = 10.0;
+		constexpr double BACKGROUND_PAD_Y = 5.0;
+		constexpr double BACKGROUND_RADIUS = 6.0;
+
+		struct Box
+		{
+			double left{ 0 }, top{ 0 }, right{ 0 }, bottom{ 0 };
+			bool   valid{ false };
+
+			void Add(double a_left, double a_top, double a_right, double a_bottom)
+			{
+				if (!valid) {
+					left = a_left;
+					top = a_top;
+					right = a_right;
+					bottom = a_bottom;
+					valid = true;
+					return;
+				}
+				left = (std::min)(left, a_left);
+				top = (std::min)(top, a_top);
+				right = (std::max)(right, a_right);
+				bottom = (std::max)(bottom, a_bottom);
+			}
+		};
+
+		// Adds a non-empty text field to the box. a_x/a_y/a_scaleX/a_scaleY describe the
+		// field's parent clip relative to the flyout (identity for the title).
+		void AddTextField(const RE::GFxValue& a_field, double a_x, double a_y, double a_scaleX, double a_scaleY, Box& a_box)
+		{
+			if (ReadText(a_field).empty()) {
+				return;
+			}
+			double x = 0.0;
+			double y = 0.0;
+			double w = 0.0;
+			double h = 0.0;
+			if (!GetNumber(a_field, "_x", x) || !GetNumber(a_field, "_y", y) ||
+				!GetNumber(a_field, "_width", w) || !GetNumber(a_field, "_height", h) || w <= 0.0 || h <= 0.0) {
+				return;
+			}
+			a_box.Add(a_x + x * a_scaleX, a_y + y * a_scaleY, a_x + (x + w) * a_scaleX, a_y + (y + h) * a_scaleY);
+		}
+
+		// The area covered by the title and the visible rows, in the flyout's own coordinates.
+		Box MeasureFlyout(const RE::GFxValue& a_description)
+		{
+			Box          box;
+			RE::GFxValue title;
+			if (GetMember(a_description, "Title", title)) {
+				AddTextField(title, 0.0, 0.0, 1.0, 1.0, box);
+			}
+			RE::GFxValue list;
+			if (!GetMember(a_description, "DescriptionList", list) || !list.IsArray()) {
+				return box;
+			}
+			const auto size = list.GetArraySize();
+			for (std::uint32_t i = 0; i < size; ++i) {
+				RE::GFxValue row;
+				RE::GFxValue visible;
+				if (!list.GetElement(i, &row) || !GetMember(row, "_visible", visible) || !visible.IsBool() || !visible.GetBool()) {
+					continue;
+				}
+				double x = 0.0;
+				double y = 0.0;
+				double scaleX = 100.0;
+				double scaleY = 100.0;
+				if (!GetNumber(row, "_x", x) || !GetNumber(row, "_y", y)) {
+					continue;
+				}
+				GetNumber(row, "_xscale", scaleX);
+				GetNumber(row, "_yscale", scaleY);
+				for (const auto name : { "Item", "Value" }) {
+					RE::GFxValue field;
+					if (GetMember(row, name, field)) {
+						AddTextField(field, x, y, scaleX / 100.0, scaleY / 100.0, box);
+					}
+				}
+			}
+			return box;
+		}
+
+		// Finds our background clip, creating it if needed. Never replaces anything the
+		// interface itself has placed at that depth.
+		bool GetBackgroundClip(RE::GFxValue& a_description, RE::GFxValue& a_clip, bool a_create)
+		{
+			if (GetMember(a_description, BACKGROUND_NAME, a_clip) && a_clip.IsDisplayObject()) {
+				return true;
+			}
+			if (!a_create || !a_description.IsDisplayObject()) {
+				return false;
+			}
+			RE::GFxValue existing;
+			RE::GFxValue depth{ static_cast<double>(BACKGROUND_DEPTH) };
+			if (a_description.Invoke("getInstanceAtDepth", &existing, &depth, 1) && !existing.IsUndefined() && !existing.IsNull()) {
+				return false;  // depth taken by something else
+			}
+			if (!a_description.CreateEmptyMovieClip(&a_clip, BACKGROUND_NAME, BACKGROUND_DEPTH) || !a_clip.IsDisplayObject()) {
+				return false;
+			}
+			a_clip.SetMember("hitTestDisable", RE::GFxValue(true));  // never intercept the mouse
+			return true;
+		}
+
+		void Call(RE::GFxValue& a_clip, const char* a_method, std::initializer_list<double> a_args)
+		{
+			std::vector<RE::GFxValue> args;
+			args.reserve(a_args.size());
+			for (const auto value : a_args) {
+				args.emplace_back(value);
+			}
+			a_clip.Invoke(a_method, nullptr, args.data(), args.size());
+		}
+
+		// Rounded rectangle from straight segments (moveTo/lineTo are what SkyUI itself uses).
+		void DrawBackground(RE::GFxValue& a_clip, const HoverState::BackgroundShape& a_shape)
+		{
+			a_clip.Invoke("clear");
+			if (a_shape.opacity <= 0 || a_shape.w <= 0.0 || a_shape.h <= 0.0) {
+				return;
+			}
+
+			const double r = (std::min)({ BACKGROUND_RADIUS, a_shape.w / 2.0, a_shape.h / 2.0 });
+			const double left = a_shape.x;
+			const double top = a_shape.y;
+			const double right = a_shape.x + a_shape.w;
+			const double bottom = a_shape.y + a_shape.h;
+
+			// Corner centres and start angles (degrees, y pointing down), clockwise from top-left.
+			const std::array<std::array<double, 3>, 4> corners{ {
+				{ left + r, top + r, 180.0 },
+				{ right - r, top + r, 270.0 },
+				{ right - r, bottom - r, 0.0 },
+				{ left + r, bottom - r, 90.0 },
+			} };
+			constexpr int STEPS = 4;
+
+			Call(a_clip, "beginFill", { 0.0, static_cast<double>(a_shape.opacity) });  // black
+			bool first = true;
+			for (const auto& [cx, cy, start] : corners) {
+				for (int i = 0; i <= STEPS; ++i) {
+					const double angle = (start + 90.0 * i / STEPS) * std::numbers::pi / 180.0;
+					const double px = cx + r * std::cos(angle);
+					const double py = cy + r * std::sin(angle);
+					Call(a_clip, first ? "moveTo" : "lineTo", { px, py });
+					first = false;
+				}
+			}
+			Call(a_clip, "lineTo", { left, top + r });  // close the shape
+			a_clip.Invoke("endFill");
+		}
+
+		// Caller holds g_stateLock.
+		void ClearBackground(RE::GFxValue& a_description)
+		{
+			if (!g_state.background) {
+				return;
+			}
+			RE::GFxValue clip;
+			if (GetBackgroundClip(a_description, clip, false)) {
+				clip.Invoke("clear");
+			}
+			g_state.background.reset();
+		}
+
+		// Caller holds g_stateLock.
+		void UpdateBackground(RE::GFxValue& a_description, const Settings& a_settings)
+		{
+			if (!a_settings.enabled || !a_settings.showBackground || a_settings.backgroundOpacity <= 0) {
+				ClearBackground(a_description);
+				return;
+			}
+			const auto box = MeasureFlyout(a_description);
+			if (!box.valid) {
+				return;
+			}
+			const HoverState::BackgroundShape shape{
+				std::round(box.left - BACKGROUND_PAD_X),
+				std::round(box.top - BACKGROUND_PAD_Y),
+				std::round(box.right - box.left + 2.0 * BACKGROUND_PAD_X),
+				std::round(box.bottom - box.top + 2.0 * BACKGROUND_PAD_Y),
+				a_settings.backgroundOpacity
+			};
+
+			RE::GFxValue clip;
+			const bool   existed = GetBackgroundClip(a_description, clip, false);
+			if (existed && g_state.background == shape) {
+				return;  // already drawn exactly like this
+			}
+			if (!existed && !GetBackgroundClip(a_description, clip, true)) {
+				if (!g_state.warnedNoBackground) {
+					g_state.warnedNoBackground = true;
+					logs::warn("Could not add the flyout background (the map interface may be from another mod)");
+				}
+				return;
+			}
+			DrawBackground(clip, shape);
+			g_state.background = shape;
 		}
 
 		bool ApplyLines(RE::GFxMovieView* a_movie, RE::GFxValue& a_description, const std::string& a_title, const std::vector<Line>& a_lines)
@@ -355,8 +574,10 @@ namespace FTI::MapMenuHook
 
 			if (g_resetRequested.exchange(false)) {
 				const bool warned = g_state.warnedNoDescription;
+				const bool warnedBackground = g_state.warnedNoBackground;
 				g_state = HoverState{};
 				g_state.warnedNoDescription = warned;
+				g_state.warnedNoBackground = warnedBackground;
 				g_state.settingsVersion = Settings::Version();
 			}
 
@@ -366,7 +587,7 @@ namespace FTI::MapMenuHook
 			const bool settingsChanged = version != g_state.settingsVersion;
 			g_state.settingsVersion = version;
 
-			if (!settings->enabled && !settingsChanged && g_state.lines.empty() && g_state.staleItems.empty()) {
+			if (!settings->enabled && !settingsChanged && g_state.lines.empty() && g_state.staleItems.empty() && !g_state.background) {
 				return;  // switched off and nothing of ours left on screen
 			}
 			if (settings->enabled) {
@@ -446,6 +667,9 @@ namespace FTI::MapMenuHook
 			if (settings->enabled && settings->lineSpacing != 100) {
 				ApplySpacing(description, settings->lineSpacing / 100.0);
 			}
+
+			// Measured after the spacing, so the panel fits the final layout.
+			UpdateBackground(description, *settings);
 		}
 
 		struct AdvanceMovieHook

@@ -17,6 +17,8 @@ namespace FTI
 		bool  autoCalibrate{ true };
 		float seedSpeed{ 80.0f };  // game units per real-time second, used until calibrated
 		int   lineSpacing{ 100 };  // flyout line spacing, percent of the game's own (100 = unchanged)
+		bool  showBackground{ false };  // translucent dark panel behind the flyout text
+		int   backgroundOpacity{ 60 };  // percent: 0 = invisible, 100 = solid
 
 		std::string travelLabel{ "Travel time" };
 		std::string arrivalLabel{ "Arrival" };

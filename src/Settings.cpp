@@ -107,18 +107,19 @@ namespace FTI
 			};
 		}
 
-		Field MakeLineSpacing()
+		// Whole number, held within [a_min, a_max]; an unreadable value keeps the default.
+		Field MakeInt(std::string_view a_name, int Settings::* a_member, int a_min, int a_max)
 		{
 			return Field{
-				"iLineSpacing", "General",
-				[](Settings& a_s, const std::string& a_v) {
+				a_name, "General",
+				[a_member, a_min, a_max](Settings& a_s, const std::string& a_v) {
 					try {
 						const auto v = static_cast<int>(std::lround(std::stod(a_v)));
-						a_s.lineSpacing = std::clamp(v, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING);
+						a_s.*a_member = std::clamp(v, a_min, a_max);
 					} catch (...) {
 					}
 				},
-				[](const Settings& a_s) { return std::to_string(a_s.lineSpacing); }
+				[a_member](const Settings& a_s) { return std::to_string(a_s.*a_member); }
 			};
 		}
 
@@ -144,7 +145,9 @@ namespace FTI
 				MakeBool("bUse24HourClock", &Settings::use24HourClock),
 				MakeBool("bShowArrivalDate", &Settings::showArrivalDate),
 				MakeBool("bShowDistance", &Settings::showDistance),
-				MakeLineSpacing(),
+				MakeInt("iLineSpacing", &Settings::lineSpacing, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING),
+				MakeBool("bShowBackground", &Settings::showBackground),
+				MakeInt("iBackgroundOpacity", &Settings::backgroundOpacity, 0, 100),
 				MakeBool("bOnlyFastTravelMarkers", &Settings::onlyFastTravelMarkers),
 				MakeBool("bAutoCalibrate", &Settings::autoCalibrate),
 				MakeSeedSpeed(),
@@ -292,9 +295,9 @@ namespace FTI
 				}
 			}
 		}
-		logs::info("Settings: enabled={} 24h={} date={} distance={} lineSpacing={}% onlyFT={} autoCalibrate={} seedSpeed={}",
+		logs::info("Settings: enabled={} 24h={} date={} distance={} lineSpacing={}% background={} ({}%) onlyFT={} autoCalibrate={} seedSpeed={}",
 			result.enabled, result.use24HourClock, result.showArrivalDate, result.showDistance, result.lineSpacing,
-			result.onlyFastTravelMarkers, result.autoCalibrate, result.seedSpeed);
+			result.showBackground, result.backgroundOpacity, result.onlyFastTravelMarkers, result.autoCalibrate, result.seedSpeed);
 		return result;
 	}
 

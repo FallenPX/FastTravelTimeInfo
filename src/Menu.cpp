@@ -53,6 +53,7 @@ namespace FTI::Menu
 
 		float         g_seedBuffer{ 80.0f };
 		int           g_spacingBuffer{ 100 };
+		int           g_opacityBuffer{ 60 };
 		std::uint32_t g_syncedVersion{ 0 };
 		bool          g_confirmReset{ false };
 		std::string   g_message;
@@ -81,6 +82,7 @@ namespace FTI::Menu
 			}
 			g_seedBuffer = a_settings.seedSpeed;
 			g_spacingBuffer = a_settings.lineSpacing;
+			g_opacityBuffer = a_settings.backgroundOpacity;
 		}
 
 		std::string Sanitize(const char* a_text)
@@ -147,6 +149,25 @@ namespace FTI::Menu
 				next.lineSpacing = 100;
 				Commit(std::move(next));
 			}
+
+			Toggle("Dark background behind the flyout", "A translucent dark panel behind the location name and rows, for easier reading on bright parts of the map.", a_s, &Settings::showBackground);
+			ImGuiMCP::BeginDisabled(!a_s.showBackground);
+			ImGuiMCP::SetNextItemWidth(220.0f);
+			ImGuiMCP::SliderInt("Background opacity", &g_opacityBuffer, 0, 100, "%d%%");
+			const bool opacityCommitted = ImGuiMCP::IsItemDeactivatedAfterEdit();
+			Tooltip("0% = invisible, 100% = solid black. Ctrl+click to type a value.");
+			if (opacityCommitted) {
+				Settings next = a_s;
+				next.backgroundOpacity = std::clamp(g_opacityBuffer, 0, 100);
+				Commit(std::move(next));
+			}
+			ImGuiMCP::SameLine();
+			if (ImGuiMCP::Button("Default##opacity")) {
+				Settings next = a_s;
+				next.backgroundOpacity = Settings{}.backgroundOpacity;
+				Commit(std::move(next));
+			}
+			ImGuiMCP::EndDisabled();
 			ImGuiMCP::EndDisabled();
 		}
 
