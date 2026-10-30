@@ -19,6 +19,7 @@ namespace FTI
 		int   lineSpacing{ 100 };  // flyout line spacing, percent of the game's own (100 = unchanged)
 		bool  showBackground{ false };  // translucent dark panel behind the flyout text
 		int   backgroundOpacity{ 60 };  // percent: 0 = invisible, 100 = solid
+		int   backgroundCornerRadius{ 3 };  // pixels: 0 = square corners
 
 		std::string travelLabel{ "Travel time" };
 		std::string arrivalLabel{ "Arrival" };
@@ -33,6 +34,7 @@ namespace FTI
 		static constexpr float MAX_SEED_SPEED = 10000.0f;
 		static constexpr int   MIN_LINE_SPACING = 50;
 		static constexpr int   MAX_LINE_SPACING = 150;
+		static constexpr int   MAX_CORNER_RADIUS = 12;
 
 		// The settings currently in use. Cheap; safe to call from any thread.
 		[[nodiscard]] static std::shared_ptr<const Settings> Current();

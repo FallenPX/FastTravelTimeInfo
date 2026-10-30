@@ -76,7 +76,7 @@ To uninstall, disable or remove it in Vortex. It does not touch save games.
 
 ## Settings
 
-Options include 24-hour or 12-hour clock, whether to show the date, an optional straight-line distance line in metres or kilometres, the line spacing of the flyout, an optional translucent dark background behind it (with adjustable opacity), and the label text. There are two ways to change them:
+Options include 24-hour or 12-hour clock, whether to show the date, an optional straight-line distance line in metres or kilometres, the line spacing of the flyout, an optional translucent dark background behind it (with adjustable opacity and corner rounding), and the label text. There are two ways to change them:
 
 - **INI file:** edit `FastTravelTimeInfo.ini` (in Vortex: right-click the mod → *Open in File Manager*). Changes take effect the next time you start the game.
 - **In-game menu (optional):** if [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) is installed, a **Fast Travel Time Info → Settings** page appears in its menu. Changes there apply straight away and are saved to the INI automatically, so the INI always holds your current settings. The page also shows the calibration status, a live preview, a **Reset calibration** button and a **Reload INI** button (for INI edits made while the game is running).
@@ -112,6 +112,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.1.3**: The flyout background now sits behind the text (it covered it before); less space above the location name; adjustable corner rounding (`iBackgroundCornerRadius`, also in the in-game menu).
 - **0.1.2**: Optional translucent dark background behind the map flyout, with adjustable opacity (`bShowBackground`, `iBackgroundOpacity`, also in the in-game menu).
 - **0.1.1**: Adjustable line spacing for the map flyout (`iLineSpacing`, also in the in-game menu).
 - **0.1.0**: Optional in-game settings page for SKSE Menu Framework (live changes, saved to the INI), calibration status and reset, Reload INI. `bEnabled` now also works while the game is running.

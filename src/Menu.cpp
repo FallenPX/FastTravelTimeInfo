@@ -54,6 +54,7 @@ namespace FTI::Menu
 		float         g_seedBuffer{ 80.0f };
 		int           g_spacingBuffer{ 100 };
 		int           g_opacityBuffer{ 60 };
+		int           g_cornerBuffer{ 3 };
 		std::uint32_t g_syncedVersion{ 0 };
 		bool          g_confirmReset{ false };
 		std::string   g_message;
@@ -83,6 +84,7 @@ namespace FTI::Menu
 			g_seedBuffer = a_settings.seedSpeed;
 			g_spacingBuffer = a_settings.lineSpacing;
 			g_opacityBuffer = a_settings.backgroundOpacity;
+			g_cornerBuffer = a_settings.backgroundCornerRadius;
 		}
 
 		std::string Sanitize(const char* a_text)
@@ -165,6 +167,22 @@ namespace FTI::Menu
 			if (ImGuiMCP::Button("Default##opacity")) {
 				Settings next = a_s;
 				next.backgroundOpacity = Settings{}.backgroundOpacity;
+				Commit(std::move(next));
+			}
+
+			ImGuiMCP::SetNextItemWidth(220.0f);
+			ImGuiMCP::SliderInt("Corner rounding", &g_cornerBuffer, 0, Settings::MAX_CORNER_RADIUS, "%d px");
+			const bool cornerCommitted = ImGuiMCP::IsItemDeactivatedAfterEdit();
+			Tooltip("0 = square corners. Higher = rounder.");
+			if (cornerCommitted) {
+				Settings next = a_s;
+				next.backgroundCornerRadius = std::clamp(g_cornerBuffer, 0, Settings::MAX_CORNER_RADIUS);
+				Commit(std::move(next));
+			}
+			ImGuiMCP::SameLine();
+			if (ImGuiMCP::Button("Default##corners")) {
+				Settings next = a_s;
+				next.backgroundCornerRadius = Settings{}.backgroundCornerRadius;
 				Commit(std::move(next));
 			}
 			ImGuiMCP::EndDisabled();

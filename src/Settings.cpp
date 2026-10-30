@@ -148,6 +148,7 @@ namespace FTI
 				MakeInt("iLineSpacing", &Settings::lineSpacing, Settings::MIN_LINE_SPACING, Settings::MAX_LINE_SPACING),
 				MakeBool("bShowBackground", &Settings::showBackground),
 				MakeInt("iBackgroundOpacity", &Settings::backgroundOpacity, 0, 100),
+				MakeInt("iBackgroundCornerRadius", &Settings::backgroundCornerRadius, 0, Settings::MAX_CORNER_RADIUS),
 				MakeBool("bOnlyFastTravelMarkers", &Settings::onlyFastTravelMarkers),
 				MakeBool("bAutoCalibrate", &Settings::autoCalibrate),
 				MakeSeedSpeed(),
@@ -295,9 +296,9 @@ namespace FTI
 				}
 			}
 		}
-		logs::info("Settings: enabled={} 24h={} date={} distance={} lineSpacing={}% background={} ({}%) onlyFT={} autoCalibrate={} seedSpeed={}",
+		logs::info("Settings: enabled={} 24h={} date={} distance={} lineSpacing={}% background={} ({}%, corners {}px) onlyFT={} autoCalibrate={} seedSpeed={}",
 			result.enabled, result.use24HourClock, result.showArrivalDate, result.showDistance, result.lineSpacing,
-			result.showBackground, result.backgroundOpacity, result.onlyFastTravelMarkers, result.autoCalibrate, result.seedSpeed);
+			result.showBackground, result.backgroundOpacity, result.backgroundCornerRadius, result.onlyFastTravelMarkers, result.autoCalibrate, result.seedSpeed);
 		return result;
 	}
 

@@ -45,6 +45,7 @@ namespace FTI::MapMenuHook
 			struct BackgroundShape
 			{
 				double x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };
+				double radius{ 0 };
 				int    opacity{ 0 };
 
 				bool operator==(const BackgroundShape&) const = default;
@@ -198,12 +199,15 @@ namespace FTI::MapMenuHook
 		// Flash file itself places (SkyUI uses the same trick for its widget layer), and a filled
 		// rounded rectangle is drawn into it with the AS2 drawing API. Being a child of the
 		// flyout, it moves and fades in and out together with it.
+		//
+		// The clip is created through ActionScript's own createEmptyMovieClip: Scaleform's C++
+		// shortcut for it treats any negative depth as "on top", which put the panel over the text.
 
 		constexpr auto   BACKGROUND_NAME = "FTIBackground";
 		constexpr int    BACKGROUND_DEPTH = -16384;
 		constexpr double BACKGROUND_PAD_X = 10.0;
-		constexpr double BACKGROUND_PAD_Y = 5.0;
-		constexpr double BACKGROUND_RADIUS = 6.0;
+		constexpr double BACKGROUND_PAD_TOP = 0.0;  // the title's own line height already leaves room above
+		constexpr double BACKGROUND_PAD_BOTTOM = 5.0;
 
 		struct Box
 		{
@@ -283,6 +287,32 @@ namespace FTI::MapMenuHook
 			return box;
 		}
 
+		bool IsDepthFree(RE::GFxValue& a_description, int a_depth)
+		{
+			RE::GFxValue existing;
+			RE::GFxValue depth{ static_cast<double>(a_depth) };
+			return a_description.Invoke("getInstanceAtDepth", &existing, &depth, 1) && (existing.IsUndefined() || existing.IsNull());
+		}
+
+		// Makes sure the clip is on the bottom layer, below every text field. Returns false if
+		// it cannot be, in which case nothing is drawn (the panel must never cover the text).
+		bool EnsureBottomLayer(RE::GFxValue& a_description, RE::GFxValue& a_clip)
+		{
+			RE::GFxValue depth;
+			if (!a_clip.Invoke("getDepth", &depth) || !depth.IsNumber()) {
+				return false;
+			}
+			if (static_cast<int>(depth.GetNumber()) == BACKGROUND_DEPTH) {
+				return true;
+			}
+			if (!IsDepthFree(a_description, BACKGROUND_DEPTH)) {
+				return false;
+			}
+			RE::GFxValue target{ static_cast<double>(BACKGROUND_DEPTH) };
+			a_clip.Invoke("swapDepths", nullptr, &target, 1);
+			return a_clip.Invoke("getDepth", &depth) && depth.IsNumber() && static_cast<int>(depth.GetNumber()) == BACKGROUND_DEPTH;
+		}
+
 		// Finds our background clip, creating it if needed. Never replaces anything the
 		// interface itself has placed at that depth.
 		bool GetBackgroundClip(RE::GFxValue& a_description, RE::GFxValue& a_clip, bool a_create)
@@ -290,15 +320,11 @@ namespace FTI::MapMenuHook
 			if (GetMember(a_description, BACKGROUND_NAME, a_clip) && a_clip.IsDisplayObject()) {
 				return true;
 			}
-			if (!a_create || !a_description.IsDisplayObject()) {
+			if (!a_create || !a_description.IsDisplayObject() || !IsDepthFree(a_description, BACKGROUND_DEPTH)) {
 				return false;
 			}
-			RE::GFxValue existing;
-			RE::GFxValue depth{ static_cast<double>(BACKGROUND_DEPTH) };
-			if (a_description.Invoke("getInstanceAtDepth", &existing, &depth, 1) && !existing.IsUndefined() && !existing.IsNull()) {
-				return false;  // depth taken by something else
-			}
-			if (!a_description.CreateEmptyMovieClip(&a_clip, BACKGROUND_NAME, BACKGROUND_DEPTH) || !a_clip.IsDisplayObject()) {
+			std::array<RE::GFxValue, 2> args{ RE::GFxValue(BACKGROUND_NAME), RE::GFxValue(static_cast<double>(BACKGROUND_DEPTH)) };
+			if (!a_description.Invoke("createEmptyMovieClip", &a_clip, args.data(), args.size()) || !a_clip.IsDisplayObject()) {
 				return false;
 			}
 			a_clip.SetMember("hitTestDisable", RE::GFxValue(true));  // never intercept the mouse
@@ -323,7 +349,7 @@ namespace FTI::MapMenuHook
 				return;
 			}
 
-			const double r = (std::min)({ BACKGROUND_RADIUS, a_shape.w / 2.0, a_shape.h / 2.0 });
+			const double r = (std::max)(0.0, (std::min)({ a_shape.radius, a_shape.w / 2.0, a_shape.h / 2.0 }));
 			const double left = a_shape.x;
 			const double top = a_shape.y;
 			const double right = a_shape.x + a_shape.w;
@@ -336,13 +362,13 @@ namespace FTI::MapMenuHook
 				{ right - r, bottom - r, 0.0 },
 				{ left + r, bottom - r, 90.0 },
 			} };
-			constexpr int STEPS = 4;
+			const int steps = r < 0.5 ? 0 : (r < 4.0 ? 3 : 4);  // 0 = square corners
 
 			Call(a_clip, "beginFill", { 0.0, static_cast<double>(a_shape.opacity) });  // black
 			bool first = true;
 			for (const auto& [cx, cy, start] : corners) {
-				for (int i = 0; i <= STEPS; ++i) {
-					const double angle = (start + 90.0 * i / STEPS) * std::numbers::pi / 180.0;
+				for (int i = 0; i <= steps; ++i) {
+					const double angle = (start + (steps > 0 ? 90.0 * i / steps : 0.0)) * std::numbers::pi / 180.0;
 					const double px = cx + r * std::cos(angle);
 					const double py = cy + r * std::sin(angle);
 					Call(a_clip, first ? "moveTo" : "lineTo", { px, py });
@@ -379,9 +405,10 @@ namespace FTI::MapMenuHook
 			}
 			const HoverState::BackgroundShape shape{
 				std::round(box.left - BACKGROUND_PAD_X),
-				std::round(box.top - BACKGROUND_PAD_Y),
+				std::round(box.top - BACKGROUND_PAD_TOP),
 				std::round(box.right - box.left + 2.0 * BACKGROUND_PAD_X),
-				std::round(box.bottom - box.top + 2.0 * BACKGROUND_PAD_Y),
+				std::round(box.bottom - box.top + BACKGROUND_PAD_TOP + BACKGROUND_PAD_BOTTOM),
+				static_cast<double>(a_settings.backgroundCornerRadius),
 				a_settings.backgroundOpacity
 			};
 
@@ -390,10 +417,14 @@ namespace FTI::MapMenuHook
 			if (existed && g_state.background == shape) {
 				return;  // already drawn exactly like this
 			}
-			if (!existed && !GetBackgroundClip(a_description, clip, true)) {
+			if ((!existed && !GetBackgroundClip(a_description, clip, true)) || !EnsureBottomLayer(a_description, clip)) {
+				if (existed) {
+					clip.Invoke("clear");  // never leave a panel on top of the text
+				}
+				g_state.background.reset();
 				if (!g_state.warnedNoBackground) {
 					g_state.warnedNoBackground = true;
-					logs::warn("Could not add the flyout background (the map interface may be from another mod)");
+					logs::warn("Could not place the flyout background behind the text (the map interface may be from another mod)");
 				}
 				return;
 			}
