@@ -27,6 +27,8 @@ The learned values are saved in `Documents\My Games\Skyrim Special Edition\SKSE\
 
 Carriage rides are not used for learning.
 
+Distances only mean something within one world. A marker in a different worldspace from the one you start in (for example a trip into or out of the Forgotten Vale) shows no estimate and is never used for learning. The walled cities, such as Whiterun, count as part of the world around them.
+
 ## Getting the DLL (no programming needed)
 
 The plugin has to be compiled into `FastTravelTimeInfo.dll`. There are two ways: on your own PC (option A) or on GitHub's machines (option B). Both produce the same `FastTravelTimeInfo-mod.zip`.
@@ -112,6 +114,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.1.4**: No estimate (and no learning) for markers in another worldspace. Interface for the optional Fast Travel Arrival Planner add-on; without the add-on nothing changes.
 - **0.1.3**: The flyout background now sits behind the text (it covered it before); less space above the location name; adjustable corner rounding (`iBackgroundCornerRadius`, also in the in-game menu).
 - **0.1.2**: Optional translucent dark background behind the map flyout, with adjustable opacity (`bShowBackground`, `iBackgroundOpacity`, also in the in-game menu).
 - **0.1.1**: Adjustable line spacing for the map flyout (`iLineSpacing`, also in the in-game menu).

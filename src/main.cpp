@@ -1,5 +1,6 @@
 #include "pch.h"
 
+#include "Api.h"
 #include "Estimator.h"
 #include "MapMenuHook.h"
 #include "Menu.h"
@@ -17,6 +18,9 @@ namespace
 			// Every SKSE plugin is loaded by now, so the optional SKSE Menu Framework
 			// can be found regardless of plugin load order.
 			FTI::Menu::Register();
+			// Fast Travel Arrival Planner (optional add-on) registered its listener while
+			// loading, so it can receive the interface now.
+			FTI::Api::SendToPlanner();
 			break;
 		case SKSE::MessagingInterface::kDataLoaded:
 			FTI::Estimator::Get().LoadCalibration();

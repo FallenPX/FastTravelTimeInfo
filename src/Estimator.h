@@ -38,6 +38,9 @@ namespace FTI
 
 		// Called when the player confirms a fast travel from the world map.
 		void ArmTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to);
+		// The next armed trip is not learned from (requested by Fast Travel Arrival Planner,
+		// whose trips deliberately take a different time). Expires after two minutes.
+		void ExcludeNextTrip();
 		// Called when the game reports the end of a fast travel.
 		void OnFastTravelEnd(float a_hours);
 
@@ -58,9 +61,10 @@ namespace FTI
 			std::chrono::steady_clock::time_point armedAt;
 		};
 
-		mutable std::mutex         _lock;
-		std::deque<double>         _samples;  // learned speeds, newest last
-		std::optional<PendingTrip> _pending;
+		mutable std::mutex                                    _lock;
+		std::deque<double>                                    _samples;  // learned speeds, newest last
+		std::optional<PendingTrip>                            _pending;
+		std::optional<std::chrono::steady_clock::time_point> _excludeUntil;
 	};
 
 	[[nodiscard]] float GetFastTravelSpeedMult();

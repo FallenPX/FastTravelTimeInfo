@@ -2,6 +2,7 @@
 
 #include "MapMenuHook.h"
 #include "Estimator.h"
+#include "FTTI_API.h"
 #include "Settings.h"
 
 // How it works
@@ -518,7 +519,8 @@ namespace FTI::MapMenuHook
 			return found;
 		}
 
-		std::optional<RE::NiPoint3> PlayerOrigin(const RE::MapMenu::RUNTIME_DATA2& a_data)
+		// a_data may be null when the map is not open.
+		std::optional<RE::NiPoint3> PlayerOrigin(const RE::MapMenu::RUNTIME_DATA2* a_data)
 		{
 			if (auto player = RE::PlayerCharacter::GetSingleton()) {
 				if (auto cell = player->GetParentCell(); cell && !cell->IsInteriorCell()) {
@@ -527,11 +529,50 @@ namespace FTI::MapMenuHook
 			}
 			// Interior (only possible with mods that allow fast travel indoors):
 			// use the position the map draws the player marker at.
-			const auto& pos = a_data.playerMarkerPosition;
-			if (pos.x != 0.0f || pos.y != 0.0f) {
-				return pos;
+			if (a_data) {
+				const auto& pos = a_data->playerMarkerPosition;
+				if (pos.x != 0.0f || pos.y != 0.0f) {
+					return pos;
+				}
 			}
 			return std::nullopt;
+		}
+
+		// ---- Worldspaces
+		//
+		// Distances only mean something within one world. Child worldspaces (the walled cities,
+		// such as Whiterun) share their parent's coordinates and map, so worlds are compared by
+		// their top-most parent. A trip into another world (for example the Forgotten Vale or
+		// Solstheim) gets no estimate and is never used for calibration.
+
+		RE::TESWorldSpace* RootWorldspace(RE::TESWorldSpace* a_world)
+		{
+			for (int depth = 0; a_world && a_world->parentWorld && depth < 16; ++depth) {
+				a_world = a_world->parentWorld;
+			}
+			return a_world;
+		}
+
+		// The world the trip starts in: the player's own when outdoors, otherwise the one the
+		// map is showing (indoor fast travel, only possible with mods).
+		RE::TESWorldSpace* OriginWorldspace(const RE::MapMenu::RUNTIME_DATA2* a_data)
+		{
+			if (auto player = RE::PlayerCharacter::GetSingleton()) {
+				if (auto cell = player->GetParentCell(); cell && !cell->IsInteriorCell()) {
+					if (auto world = player->GetWorldspace()) {
+						return world;
+					}
+				}
+			}
+			return a_data ? a_data->worldSpace : nullptr;
+		}
+
+		// True only when both worlds are known and differ.
+		bool IsOtherWorldspace(const RE::TESObjectREFR& a_destination, const RE::MapMenu::RUNTIME_DATA2* a_data)
+		{
+			const auto destination = RootWorldspace(a_destination.GetWorldspace());
+			const auto origin = RootWorldspace(OriginWorldspace(a_data));
+			return destination && origin && destination != origin;
 		}
 
 		void ComputeLines(const Settings& settings, const RE::MapMenu::RUNTIME_DATA2& a_data, std::int32_t a_selected, const std::string& a_title)
@@ -555,7 +596,11 @@ namespace FTI::MapMenuHook
 			if (settings.onlyFastTravelMarkers && !extra->mapData->flags.all(RE::MapMarkerData::Flag::kCanTravelTo)) {
 				return;
 			}
-			const auto origin = PlayerOrigin(a_data);
+			if (IsOtherWorldspace(*ref, &a_data)) {
+				logs::info("No estimate for \"{}\": it is in another worldspace", a_title);
+				return;  // no rows, and no destPos, so the trip is never used for calibration
+			}
+			const auto origin = PlayerOrigin(&a_data);
 			if (!origin) {
 				return;
 			}
@@ -582,7 +627,7 @@ namespace FTI::MapMenuHook
 			}
 			g_state.tripArmed = true;
 			if (g_state.destPos) {
-				if (const auto origin = PlayerOrigin(a_data)) {
+				if (const auto origin = PlayerOrigin(&a_data)) {
 					Estimator::Get().ArmTrip(*origin, *g_state.destPos);
 				}
 			}
@@ -758,6 +803,40 @@ namespace FTI::MapMenuHook
 				return RE::BSEventNotifyControl::kContinue;
 			}
 		};
+	}
+
+	bool EstimateTripTo(const RE::TESObjectREFR& a_destination, FTTI_API::TripInfo& a_out)
+	{
+		a_out = FTTI_API::TripInfo{};
+		if (REL::Module::IsVR()) {
+			return false;
+		}
+		RE::GPtr<RE::MapMenu>               menu;
+		const RE::MapMenu::RUNTIME_DATA2* data = nullptr;
+		if (auto ui = RE::UI::GetSingleton()) {
+			menu = ui->GetMenu<RE::MapMenu>();
+			if (menu) {
+				data = menu->GetRuntimeData2();
+			}
+		}
+		if (IsOtherWorldspace(a_destination, data)) {
+			a_out.otherWorldspace = true;
+			return false;
+		}
+		const auto origin = PlayerOrigin(data);
+		if (!origin) {
+			return false;
+		}
+		const auto estimate = Estimator::Get().Estimate(*origin, a_destination.GetPosition());
+		if (!estimate) {
+			return false;
+		}
+		a_out.valid = true;
+		a_out.calibrated = estimate->calibrated;
+		a_out.hours = estimate->hours;
+		a_out.distance = estimate->distance;
+		a_out.speedMult = GetFastTravelSpeedMult();
+		return true;
 	}
 
 	void Install()

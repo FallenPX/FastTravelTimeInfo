@@ -13,6 +13,7 @@ namespace FTI
 		constexpr double      MAX_PLAUSIBLE_SPEED = 5000.0;
 		constexpr double      METRES_PER_UNIT = 1.8288 / 128.0;  // 128 units = 6 ft (Creation Kit scale)
 		constexpr auto        PENDING_TIMEOUT = std::chrono::minutes(15);
+		constexpr auto        EXCLUDE_TIMEOUT = std::chrono::minutes(2);
 
 		double Distance(const RE::NiPoint3& a_a, const RE::NiPoint3& a_b)
 		{
@@ -252,8 +253,22 @@ namespace FTI
 	void Estimator::ArmTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to)
 	{
 		std::lock_guard guard{ _lock };
-		_pending = PendingTrip{ a_from, a_to, GetFastTravelSpeedMult(), GetTimescale(), std::chrono::steady_clock::now() };
+		const auto now = std::chrono::steady_clock::now();
+		const bool excluded = _excludeUntil && now < *_excludeUntil;
+		_excludeUntil.reset();
+		if (excluded) {
+			_pending.reset();
+			logs::info("Trip planned by Fast Travel Arrival Planner: not used for calibration");
+			return;
+		}
+		_pending = PendingTrip{ a_from, a_to, GetFastTravelSpeedMult(), GetTimescale(), now };
 		logs::debug("Trip armed: {:.0f} units", Distance(a_from, a_to));
+	}
+
+	void Estimator::ExcludeNextTrip()
+	{
+		std::lock_guard guard{ _lock };
+		_excludeUntil = std::chrono::steady_clock::now() + EXCLUDE_TIMEOUT;
 	}
 
 	void Estimator::OnFastTravelEnd(float a_hours)
