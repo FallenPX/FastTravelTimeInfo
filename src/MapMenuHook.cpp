@@ -185,7 +185,10 @@ namespace FTI::MapMenuHook
 			std::string               font;      // face, after the game's font configuration
 			std::string               fontAsSet;  // as the flyout names it, e.g. "$EverywhereMediumFont"
 			double                    sizePx{ 0.0 };
+			bool                      shadowKnown{ false };
 			std::optional<TextShadow> shadow;
+			std::string               how;           // how the size was worked out (log)
+			std::string               shadowSource;  // where the shadow was read (log)
 		};
 
 		std::mutex              g_lookLock;  // guards the three below
@@ -255,10 +258,55 @@ namespace FTI::MapMenuHook
 			return it != map.end() ? it->second : a_name;
 		}
 
-		// How much one unit inside a text field measures on the screen.
-		double ScreenUnits(RE::GFxMovieView* a_movie, const RE::GFxValue& a_field)
+		// Stage (the movie's own pixels) to screen pixels. The game scales its menus to fit the
+		// screen keeping their proportions, so the smaller of the two ratios applies. Measured
+		// from the movie's own size and the game's screen size; the movie's viewport and visible
+		// area are logged alongside, as a cross-check.
+		double MovieToScreen(RE::GFxMovieView* a_movie, std::string& a_how)
 		{
-			double     toStage = 1.0;
+			double stageW = 0.0;
+			double stageH = 0.0;
+			if (const auto def = a_movie->GetMovieDef()) {
+				stageW = def->GetWidth();
+				stageH = def->GetHeight();
+			}
+			double screenW = 0.0;
+			double screenH = 0.0;
+			if (const auto state = RE::BSGraphics::State::GetSingleton()) {
+				screenW = state->screenWidth;
+				screenH = state->screenHeight;
+			}
+			RE::GViewport viewport;
+			a_movie->GetViewport(&viewport);
+			const auto visible = a_movie->GetVisibleFrameRect();
+			const double visibleW = static_cast<double>(visible.right) - visible.left;
+			const double visibleH = static_cast<double>(visible.bottom) - visible.top;
+			if (screenW <= 0.0 || screenH <= 0.0) {  // fall back on the movie's viewport
+				screenW = viewport.width;
+				screenH = viewport.height;
+			}
+
+			double scale = 0.0;
+			if (stageW > 0.0 && stageH > 0.0 && screenW > 0.0 && screenH > 0.0) {
+				scale = (std::min)(screenW / stageW, screenH / stageH);
+			} else if (visibleH > 0.0 && screenH > 0.0) {
+				scale = screenH / visibleH;
+			}
+			if (!(scale > 0.05 && scale < 20.0)) {
+				scale = 1.0;
+			}
+			a_how = std::format("movie {:.0f} x {:.0f} on screen {:.0f} x {:.0f} = x{:.2f} (viewport {} x {}, visible area {:.0f} x {:.0f})",
+				stageW, stageH, screenW, screenH, scale, viewport.width, viewport.height, visibleW, visibleH);
+			return scale;
+		}
+
+		// How much one unit inside a text field measures on the stage: the scale of everything
+		// it sits in, and its own. Two ways of reading the scale of what it sits in, the second
+		// for when the first gives nothing.
+		double StageUnits(RE::GFxMovieView* a_movie, const RE::GFxValue& a_field, std::string& a_how)
+		{
+			double       toStage = 0.0;
+			const char*  method = "unknown, taken as x1";
 			RE::GFxValue parent;
 			if (GetMember(a_field, "_parent", parent) && parent.IsDisplayObject()) {
 				RE::GFxValue top;
@@ -274,29 +322,52 @@ namespace FTI::MapMenuHook
 				if (parent.Invoke("localToGlobal", nullptr, &top, 1) && parent.Invoke("localToGlobal", nullptr, &bottom, 1) &&
 					GetNumber(top, "y", y0) && GetNumber(bottom, "y", y1) && y1 > y0) {
 					toStage = (y1 - y0) / 100.0;
+					method = "localToGlobal";
 				}
+				if (!(toStage > 0.0)) {
+					// The parent's height on the stage against its own height.
+					RE::GFxValue root;
+					RE::GFxValue onStage;
+					RE::GFxValue own;
+					double       a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
+					if (a_movie->GetVariable(&root, "_root") && parent.Invoke("getBounds", &onStage, &root, 1) &&
+						parent.Invoke("getBounds", &own, &parent, 1) && GetNumber(onStage, "yMin", a0) && GetNumber(onStage, "yMax", a1) &&
+						GetNumber(own, "yMin", b0) && GetNumber(own, "yMax", b1) && b1 > b0 && a1 > a0) {
+						toStage = (a1 - a0) / (b1 - b0);
+						method = "getBounds";
+					}
+				}
+			}
+			if (!(toStage > 0.01 && toStage < 100.0)) {
+				toStage = 1.0;
 			}
 			double fieldScale = 100.0;
 			GetNumber(a_field, "_yscale", fieldScale);
-			RE::GViewport viewport;
-			a_movie->GetViewport(&viewport);
-			const auto   visible = a_movie->GetVisibleFrameRect();
-			const double visibleHeight = static_cast<double>(visible.bottom) - visible.top;
-			const double toScreen = visibleHeight > 0.0 && viewport.height > 0 ? viewport.height / visibleHeight : 1.0;
-			return toStage * (fieldScale / 100.0) * toScreen;
+			a_how = std::format("parent x{:.2f} ({}), field x{:.2f}", toStage, method, fieldScale / 100.0);
+			return toStage * (fieldScale / 100.0);
 		}
 
-		// A drop shadow or glow, from the field's filters or its parent's.
-		std::optional<TextShadow> ReadShadow(const RE::GFxValue& a_field, double a_units)
+		struct ShadowRead
 		{
+			bool                      known{ false };  // the flyout said whether its text has a shadow
+			std::optional<TextShadow> shadow;
+			std::string               source;          // for the log
+		};
+
+		// A drop shadow or glow: from the field's filters or its parent's, or from Scaleform's own
+		// text shadow (shadowStyle). "Not known" when neither can be read.
+		ShadowRead ReadShadow(const RE::GFxValue& a_field, double a_units)
+		{
+			ShadowRead   result;
 			RE::GFxValue parent;
 			GetMember(a_field, "_parent", parent);
 			const std::array<const RE::GFxValue*, 2> owners{ &a_field, &parent };
-			for (const auto* owner : owners) {
+			for (std::size_t o = 0; o < owners.size(); ++o) {
 				RE::GFxValue filters;
-				if (!GetMember(*owner, "filters", filters) || !filters.IsArray()) {
+				if (!GetMember(*owners[o], "filters", filters) || !filters.IsArray()) {
 					continue;
 				}
+				result.known = true;
 				for (std::uint32_t i = 0; i < filters.GetArraySize(); ++i) {
 					RE::GFxValue filter;
 					double       color = 0.0;
@@ -317,10 +388,41 @@ namespace FTI::MapMenuHook
 					if (GetNumber(filter, "blurX", value)) {
 						shadow.blur = value * a_units;
 					}
-					return shadow;
+					result.shadow = shadow;
+					result.source = o == 0 ? "the text's filters" : "its parent's filters";
+					return result;
 				}
 			}
-			return std::nullopt;
+			// Scaleform's text shadow, e.g. shadowStyle = "s{1,1}t{0,0}" (offsets in pixels).
+			RE::GFxValue style;
+			if (GetMember(a_field, "shadowStyle", style) && style.IsString() && style.GetString()) {
+				result.known = true;
+				const std::string text = style.GetString();
+				const auto        s = text.find('s');
+				const auto        open = s == std::string::npos ? std::string::npos : text.find('{', s);
+				const auto        close = open == std::string::npos ? std::string::npos : text.find('}', open);
+				if (close != std::string::npos) {
+					double x = 0.0;
+					double y = 0.0;
+					if (std::sscanf(text.substr(open + 1, close - open - 1).c_str(), "%lf,%lf", &x, &y) == 2 && (x != 0.0 || y != 0.0)) {
+						TextShadow shadow;
+						double     color = 0.0;
+						if (RE::GFxValue c; GetMember(a_field, "shadowColor", c) && c.IsNumber()) {
+							color = c.GetNumber();
+						}
+						shadow.color = static_cast<std::uint32_t>(color) & 0xFFFFFFu;
+						shadow.alpha = 0.85;
+						shadow.distance = std::hypot(x, y) * a_units;
+						shadow.angle = std::atan2(y, x) * 180.0 / 3.14159265358979;
+						result.shadow = shadow;
+						result.source = std::format("Scaleform text shadow \"{}\"", text);
+					}
+				}
+			}
+			if (!result.known) {
+				result.source = "not readable";
+			}
+			return result;
 		}
 
 		std::optional<TextInfo> ReadTextInfo(RE::GFxMovieView* a_movie, const RE::GFxValue& a_field)
@@ -335,12 +437,21 @@ namespace FTI::MapMenuHook
 				info.fontAsSet = font.GetString();
 				info.font = ResolveFont(info.fontAsSet);
 			}
-			const double units = ScreenUnits(a_movie, a_field);
+			std::string  screenHow;
+			std::string  stageHow;
+			const double toScreen = MovieToScreen(a_movie, screenHow);
+			const double stage = StageUnits(a_movie, a_field, stageHow);
 			double       size = 0.0;
 			if (GetNumber(format, "size", size) && size > 0.0) {
-				info.sizePx = size * units;
+				info.sizePx = size * stage * toScreen;
 			}
-			info.shadow = ReadShadow(a_field, units);
+			double textHeight = 0.0;
+			GetNumber(a_field, "textHeight", textHeight);
+			info.how = std::format("text size {:.1f} (line {:.1f}); {}; {}", size, textHeight, stageHow, screenHow);
+			const auto shadow = ReadShadow(a_field, stage * toScreen);
+			info.shadowKnown = shadow.known;
+			info.shadow = shadow.shadow;
+			info.shadowSource = shadow.source;
 			return info;
 		}
 
@@ -353,11 +464,12 @@ namespace FTI::MapMenuHook
 			if (!a_info->fontAsSet.empty() && a_info->fontAsSet != a_info->font) {
 				text += std::format(" ({})", a_info->fontAsSet);
 			}
-			text += std::format(" {:.1f} px", a_info->sizePx);
+			text += std::format(" {:.1f} px [{}]", a_info->sizePx, a_info->how);
 			if (const auto& s = a_info->shadow) {
-				text += std::format(", shadow #{:06X} {:.0f}% {:.1f} px at {:.0f} deg, blur {:.1f} px", s->color, s->alpha * 100.0, s->distance, s->angle, s->blur);
+				text += std::format(", shadow #{:06X} {:.0f}% {:.1f} px at {:.0f} deg, blur {:.1f} px (from {})", s->color, s->alpha * 100.0,
+					s->distance, s->angle, s->blur, a_info->shadowSource);
 			} else {
-				text += ", no shadow";
+				text += a_info->shadowKnown ? ", no shadow"s : std::format(", shadow {}", a_info->shadowSource);
 			}
 			return text;
 		}
@@ -370,7 +482,8 @@ namespace FTI::MapMenuHook
 			if (!a) {
 				return true;
 			}
-			return a->font == b->font && std::abs(a->sizePx - b->sizePx) < 0.5 && a->shadow.has_value() == b->shadow.has_value();
+			return a->font == b->font && std::abs(a->sizePx - b->sizePx) < 0.5 && a->shadow.has_value() == b->shadow.has_value() &&
+			       a->shadowKnown == b->shadowKnown;
 		}
 
 		// Returns true once both the title and a row have been read.
@@ -1352,6 +1465,7 @@ namespace FTI::MapMenuHook
 			a_out.rowSize = static_cast<float>(row->sizePx);
 		}
 		const auto& shadowSource = g_titleText && g_titleText->shadow ? g_titleText : row;
+		a_out.shadowKnown = (g_titleText && g_titleText->shadowKnown) || (row && row->shadowKnown);
 		if (shadowSource && shadowSource->shadow) {
 			const auto& shadow = *shadowSource->shadow;
 			a_out.shadow = true;

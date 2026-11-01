@@ -65,6 +65,7 @@ namespace FTTI_API
 		float         shadowDistance{ 0.0f };    // screen pixels (0 = a glow around the text)
 		float         shadowAngle{ 45.0f };      // degrees: 0 = right, 90 = down
 		float         shadowBlur{ 0.0f };        // screen pixels
+		bool          shadowKnown{ false };      // FTTI 0.3.1+: the flyout told whether its text has a shadow
 	};
 
 	struct Interface

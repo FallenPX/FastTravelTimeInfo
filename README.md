@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.3.1**: For Fast Travel Arrival Planner: the flyout's text size on screen is now measured against the game's screen size (0.3.0 could come out far too small), the text shadow is also read from Scaleform's own text shadow, and FTTI says when it could not read a shadow at all. The *Flyout text* log line shows every step of the measurement.
 - **0.3.0**: For Fast Travel Arrival Planner 0.0.10: FTTI also tells the planner the flyout's font (after the game's font configuration), its text sizes on screen and its text shadow, so the planner's panel can match any interface mod. The log records them (*Flyout text: ...*). Nothing changes on screen.
 - **0.2.0**: For Fast Travel Arrival Planner 0.0.8: FTTI tells the planner the colours of the map's location flyout, read from your interface mod while the game runs, and its own background settings, so the planner's panel can match the flyout. The log records the colours (*Flyout colours: ...*). Nothing changes on screen.
 - **0.1.9**: Estimates for trips into and out of Fort Dawnguard, out of the Forgotten Vale, and similar areas, measured between where both places sit on Skyrim's map, as the game does (tested within 2–6% of the game's time). They are marked approximate (~) and are not used for learning. Trips into the Vale still show no estimate, because the game passes no time there.
