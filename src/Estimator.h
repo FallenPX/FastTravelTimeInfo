@@ -38,6 +38,9 @@ namespace FTI
 
 		// Called when the player confirms a fast travel from the world map.
 		void ArmTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to);
+		// Called instead when the trip had no estimate (another worldspace). Never learned
+		// from; only what the game charges is logged.
+		void NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const std::string& a_title);
 		// The next armed trip is not learned from (requested by Fast Travel Arrival Planner,
 		// whose trips deliberately take a different time). Expires after two minutes.
 		void ExcludeNextTrip();
@@ -61,9 +64,22 @@ namespace FTI
 			std::chrono::steady_clock::time_point armedAt;
 		};
 
+		struct UnestimatedTrip
+		{
+			RE::NiPoint3                          from;
+			RE::NiPoint3                          to;
+			std::string                           title;
+			float                                 mult{ 1.0f };
+			float                                 timescale{ 20.0f };
+			std::chrono::steady_clock::time_point notedAt;
+		};
+
+		void LogUnestimatedTripLocked(const UnestimatedTrip& a_trip, float a_hours) const;
+
 		mutable std::mutex                                    _lock;
 		std::deque<double>                                    _samples;  // learned speeds, newest last
 		std::optional<PendingTrip>                            _pending;
+		std::optional<UnestimatedTrip>                        _unestimated;
 		std::optional<std::chrono::steady_clock::time_point> _excludeUntil;
 	};
 

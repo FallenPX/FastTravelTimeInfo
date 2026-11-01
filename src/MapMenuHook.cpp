@@ -36,6 +36,7 @@ namespace FTI::MapMenuHook
 			std::string                 title;
 			std::vector<Line>           lines;    // our rows for the current marker
 			std::optional<RE::NiPoint3> destPos;  // current marker position (for calibration)
+			std::optional<RE::NiPoint3> otherWorldPos;  // marker in another worldspace (log only)
 			std::vector<std::string>    staleItems;  // labels used earlier for this marker
 			std::uint32_t               settingsVersion{ 0 };
 			int                         failedApplies{ 0 };
@@ -576,8 +577,11 @@ namespace FTI::MapMenuHook
 			}
 			auto text = WorldName(a_world);
 			if (a_world->parentWorld) {
-				text += std::format(" [parent {}, parent flags {:02X}: {}]", WorldName(a_world->parentWorld),
-					a_world->parentUseFlags.underlying(), SharesParentCoordinates(a_world) ? "same coordinates" : "own coordinates");
+				const auto& map = a_world->worldMapOffsetData;
+				text += std::format(" [parent {}, parent flags {:02X}: {}; map scale {:g}, map offset ({:.0f}, {:.0f}, {:.0f})]",
+					WorldName(a_world->parentWorld), a_world->parentUseFlags.underlying(),
+					SharesParentCoordinates(a_world) ? "same coordinates" : "own coordinates",
+					map.mapScale, map.mapOffsetX, map.mapOffsetY, map.mapOffsetZ);
 			}
 			return text;
 		}
@@ -651,8 +655,11 @@ namespace FTI::MapMenuHook
 				return;
 			}
 			if (IsOtherWorldspace(*ref, &a_data)) {
-				logs::info("No estimate for \"{}\": it is in another worldspace", a_title);
-				return;  // no rows, and no destPos, so the trip is never used for calibration
+				// No rows and no destPos, so the trip is never used for calibration. The position
+				// is kept only to log what the game charges if the player goes there anyway.
+				g_state.otherWorldPos = ref->GetPosition();
+				logs::debug("No estimate for \"{}\": it is in another worldspace", a_title);
+				return;
 			}
 			const auto origin = PlayerOrigin(&a_data);
 			if (!origin) {
@@ -680,9 +687,11 @@ namespace FTI::MapMenuHook
 				return;
 			}
 			g_state.tripArmed = true;
-			if (g_state.destPos) {
-				if (const auto origin = PlayerOrigin(&a_data)) {
+			if (const auto origin = PlayerOrigin(&a_data)) {
+				if (g_state.destPos) {
 					Estimator::Get().ArmTrip(*origin, *g_state.destPos);
+				} else if (g_state.otherWorldPos) {
+					Estimator::Get().NoteUnestimatedTrip(*origin, *g_state.otherWorldPos, g_state.title);
 				}
 			}
 		}
@@ -758,6 +767,7 @@ namespace FTI::MapMenuHook
 				g_state.lines.clear();
 				g_state.staleItems.clear();
 				g_state.destPos.reset();
+				g_state.otherWorldPos.reset();
 				g_state.failedApplies = 0;
 				ComputeLines(*settings, *data, selected, title);
 			} else if (settingsChanged) {
@@ -766,6 +776,7 @@ namespace FTI::MapMenuHook
 				}
 				g_state.lines.clear();
 				g_state.destPos.reset();
+				g_state.otherWorldPos.reset();
 				g_state.failedApplies = 0;
 				ComputeLines(*settings, *data, selected, title);
 			}

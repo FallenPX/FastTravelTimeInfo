@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.1.7**: Log only, nothing changes on screen. For a trip into or out of another worldspace, the log now records how long the game took and how far apart the two positions are, plus each area's map placement. This shows whether such an area (for example Fort Dawnguard) could share Skyrim's coordinates after all. The repeated *No estimate for ...* lines are gone: one line per pair of areas is enough.
 - **0.1.6**: Fix: trips into and out of the Forgotten Vale got an estimate (a wrong one) and could be used for learning. The Vale uses Skyrim's map, and 0.1.5 counted every area linked to Skyrim in this way as part of it. Now only areas built on Skyrim's own coordinates count as part of it (the walled cities); the Vale and similar areas count as separate. The log records each such decision once per session. Settings are kept as in 0.1.5.
 - **0.1.5**: Your settings now live in their own file (`Documents\My Games\Skyrim Special Edition\SKSE\FastTravelTimeInfo.ini`), so updates no longer reset them; options added by future versions are merged in automatically. **Updating from 0.1.4 or earlier:** to keep settings you changed, copy your current `Data\SKSE\Plugins\FastTravelTimeInfo.ini` (in Vortex: right-click the mod → *Open in File Manager*) into that Documents folder *before* installing this version.
 - **0.1.4**: No estimate (and no learning) for markers in another worldspace. Interface for the optional Fast Travel Arrival Planner add-on; without the add-on nothing changes.

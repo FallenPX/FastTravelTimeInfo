@@ -256,6 +256,7 @@ namespace FTI
 		const auto now = std::chrono::steady_clock::now();
 		const bool excluded = _excludeUntil && now < *_excludeUntil;
 		_excludeUntil.reset();
+		_unestimated.reset();
 		if (excluded) {
 			_pending.reset();
 			logs::info("Trip planned by Fast Travel Arrival Planner: not used for calibration");
@@ -263,6 +264,31 @@ namespace FTI
 		}
 		_pending = PendingTrip{ a_from, a_to, GetFastTravelSpeedMult(), GetTimescale(), now };
 		logs::debug("Trip armed: {:.0f} units", Distance(a_from, a_to));
+	}
+
+	void Estimator::NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const std::string& a_title)
+	{
+		std::lock_guard guard{ _lock };
+		_pending.reset();
+		_unestimated = UnestimatedTrip{ a_from, a_to, a_title, GetFastTravelSpeedMult(), GetTimescale(), std::chrono::steady_clock::now() };
+		logs::info("Trip to \"{}\" confirmed without an estimate (another worldspace): not used for calibration", a_title);
+	}
+
+	// Diagnostics: what the game charged for a trip into or out of another worldspace, and the
+	// speed that would mean if both places used the same coordinates. A speed close to the
+	// learned one suggests they do.
+	void Estimator::LogUnestimatedTripLocked(const UnestimatedTrip& a_trip, float a_hours) const
+	{
+		const double distance = Distance(a_trip.from, a_trip.to);
+		if (a_hours <= 0.001f) {
+			logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown): the game passed no time. Positions {:.0f} units apart",
+				a_hours, a_trip.title, distance);
+			return;
+		}
+		const double speed = distance * a_trip.timescale / (3600.0 * static_cast<double>(a_hours) * a_trip.mult);
+		logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown). Positions {:.0f} units apart: "
+				   "if both used the same coordinates, that would mean speed {:.1f} (learned speed {:.1f})",
+			a_hours, a_trip.title, distance, speed, SpeedLocked());
 	}
 
 	void Estimator::ExcludeNextTrip()
@@ -275,10 +301,18 @@ namespace FTI
 	{
 		std::lock_guard guard{ _lock };
 		if (!_pending) {
+			if (_unestimated) {
+				const auto unestimated = *_unestimated;
+				_unestimated.reset();
+				if (std::chrono::steady_clock::now() - unestimated.notedAt <= PENDING_TIMEOUT) {
+					LogUnestimatedTripLocked(unestimated, a_hours);
+				}
+			}
 			return;  // carriage ride or a fast travel not started from the world map
 		}
 		const auto trip = *_pending;
 		_pending.reset();
+		_unestimated.reset();
 
 		logs::info("Fast travel ended: game reports {:.3f} h", a_hours);
 
