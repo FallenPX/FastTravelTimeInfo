@@ -71,19 +71,23 @@ Drag `FastTravelTimeInfo-mod.zip` onto Vortex's **Mods** page, enable it and dep
 
 ```
 Data\SKSE\Plugins\FastTravelTimeInfo.dll
-Data\SKSE\Plugins\FastTravelTimeInfo.ini
+Data\SKSE\Plugins\FastTravelTimeInfo.ini   (the default settings)
 ```
 
 To uninstall, disable or remove it in Vortex. It does not touch save games.
+
+To update, install the new zip over the old version. Your settings are kept (see *Settings*).
 
 ## Settings
 
 Options include 24-hour or 12-hour clock, whether to show the date, an optional straight-line distance line in metres or kilometres, the line spacing of the flyout, an optional translucent dark background behind it (with adjustable opacity and corner rounding), and the label text. There are two ways to change them:
 
-- **INI file:** edit `FastTravelTimeInfo.ini` (in Vortex: right-click the mod → *Open in File Manager*). Changes take effect the next time you start the game.
-- **In-game menu (optional):** if [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) is installed, a **Fast Travel Time Info → Settings** page appears in its menu. Changes there apply straight away and are saved to the INI automatically, so the INI always holds your current settings. The page also shows the calibration status, a live preview, a **Reset calibration** button and a **Reload INI** button (for INI edits made while the game is running).
+- **Your settings file:** `Documents\My Games\Skyrim Special Edition\SKSE\FastTravelTimeInfo.ini` (on GOG, the folder is `Skyrim Special Edition GOG`), next to the log and the calibration file. Changes take effect the next time you start the game.
+- **In-game menu (optional):** if [SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352) is installed, a **Fast Travel Time Info → Settings** page appears in its menu. Changes there apply straight away and are saved to your settings file automatically. The page also shows the calibration status, a live preview, a **Reset calibration** button and a **Reload INI** button (for edits made while the game is running).
 
-SKSE Menu Framework is not required. Without it, the plugin works exactly the same and is configured through the INI only.
+The plugin creates your settings file from the defaults the first time the game starts. **Updates never replace it.** When a new version adds options, they are copied into your file with their default values and explanations; nothing you have set, changed or commented out is touched. The `FastTravelTimeInfo.ini` inside the mod only holds the defaults: once your own file exists, editing it has no effect.
+
+SKSE Menu Framework is not required. Without it, the plugin works exactly the same and is configured through your settings file only.
 
 When the menu saves, it changes only the values you changed. Comments and lines you have disabled with `;` are left as they are.
 
@@ -114,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.1.5**: Your settings now live in their own file (`Documents\My Games\Skyrim Special Edition\SKSE\FastTravelTimeInfo.ini`), so updates no longer reset them; options added by future versions are merged in automatically. **Updating from 0.1.4 or earlier:** to keep settings you changed, copy your current `Data\SKSE\Plugins\FastTravelTimeInfo.ini` (in Vortex: right-click the mod → *Open in File Manager*) into that Documents folder *before* installing this version.
 - **0.1.4**: No estimate (and no learning) for markers in another worldspace. Interface for the optional Fast Travel Arrival Planner add-on; without the add-on nothing changes.
 - **0.1.3**: The flyout background now sits behind the text (it covered it before); less space above the location name; adjustable corner rounding (`iBackgroundCornerRadius`, also in the in-game menu).
 - **0.1.2**: Optional translucent dark background behind the map flyout, with adjustable opacity (`bShowBackground`, `iBackgroundOpacity`, also in the in-game menu).

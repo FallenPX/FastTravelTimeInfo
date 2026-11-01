@@ -2,8 +2,12 @@
 
 namespace FTI
 {
-	// User options, read from Data/SKSE/Plugins/FastTravelTimeInfo.ini.
-	// Every value has a safe default, so a missing or partial INI is fine.
+	// User options. The player's own settings file is
+	//   Documents/My Games/Skyrim Special Edition/SKSE/FastTravelTimeInfo.ini
+	// (next to the log and the calibration file). It is created from the INI that comes with
+	// the mod (Data/SKSE/Plugins/FastTravelTimeInfo.ini, the defaults) on first start, so
+	// installing an update never replaces it; options a newer version adds are copied into it.
+	// Every value has a safe default, so a missing or partial file is fine.
 	//
 	// The live settings are an immutable snapshot that is swapped as a whole, so the
 	// in-game menu (render thread) can change them while the map menu (UI thread) reads them.
@@ -43,12 +47,16 @@ namespace FTI
 		// Replaces the live settings.
 		static void Set(Settings a_settings);
 
-		// Defaults overlaid with whatever the INI contains.
+		// Where the player's settings file is.
+		[[nodiscard]] static std::string FilePath();
+		// Defaults overlaid with whatever the player's settings file contains.
 		[[nodiscard]] static Settings LoadFromIni();
-		// LoadFromIni() + Set().
+		// Creates the player's settings file if needed, adds options new in this version,
+		// then LoadFromIni() + Set().
 		static void Reload();
-		// Writes the given settings into the INI. Comments, layout and commented-out lines
-		// are kept; only values that actually differ are changed. Returns false on failure.
+		// Writes the given settings into the player's settings file. Comments, layout and
+		// commented-out lines are kept; only values that actually differ are changed.
+		// Returns false on failure.
 		static bool SaveToIni(const Settings& a_settings);
 	};
 }

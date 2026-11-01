@@ -6,7 +6,13 @@ namespace FTI
 {
 	namespace
 	{
-		constexpr auto INI_PATH = "Data/SKSE/Plugins/FastTravelTimeInfo.ini"sv;
+		// The INI that comes with the mod holds the defaults and is the template for the
+		// player's own settings file, which lives outside the mod's folder (see UserPath) so that
+		// installing an update never replaces it.
+		constexpr auto DEFAULTS_PATH = "Data/SKSE/Plugins/FastTravelTimeInfo.ini"sv;
+		constexpr auto USER_FILE_NAME = "FastTravelTimeInfo.ini"sv;
+		// Lines starting with this describe only the defaults file and are not copied.
+		constexpr auto DEFAULTS_ONLY_MARK = ";!"sv;
 
 		std::mutex                      g_lock;
 		std::shared_ptr<const Settings> g_current = std::make_shared<const Settings>();
@@ -237,10 +243,20 @@ namespace FTI
 			bool                     exists{ false };
 		};
 
-		IniFile ReadIni()
+		// Next to the log and the calibration file:
+		// Documents\My Games\Skyrim Special Edition\SKSE\FastTravelTimeInfo.ini
+		std::filesystem::path UserPath()
+		{
+			if (auto dir = logs::log_directory()) {
+				return *dir / USER_FILE_NAME;
+			}
+			return std::filesystem::path(DEFAULTS_PATH);  // no Documents folder found: use the mod's INI as before
+		}
+
+		IniFile ReadIni(const std::filesystem::path& a_path)
 		{
 			IniFile       ini;
-			std::ifstream file{ std::filesystem::path(INI_PATH), std::ios::binary };
+			std::ifstream file{ a_path, std::ios::binary };
 			if (!file) {
 				return ini;
 			}
@@ -257,6 +273,217 @@ namespace FTI
 			}
 			ini.crlf = sawCrLf || !sawLf;
 			return ini;
+		}
+
+		// Writes in place (not via a temporary file), so a mod manager's hard link to the file
+		// stays intact.
+		bool WriteIni(const std::filesystem::path& a_path, const IniFile& a_ini)
+		{
+			std::error_code ec;
+			if (a_path.has_parent_path()) {
+				std::filesystem::create_directories(a_path.parent_path(), ec);
+			}
+			std::ofstream file{ a_path, std::ios::binary | std::ios::trunc };
+			if (!file) {
+				logs::warn("Could not write {}", a_path.string());
+				return false;
+			}
+			const std::string_view eol = a_ini.crlf ? "\r\n" : "\n";
+			for (const auto& line : a_ini.lines) {
+				file << line << eol;
+			}
+			file.flush();
+			if (!file) {
+				logs::warn("Writing {} failed", a_path.string());
+				return false;
+			}
+			return true;
+		}
+
+		// "; sDayUnit = d": an option the player has commented out on purpose. Only names of
+		// real options count, so ordinary comments that happen to contain '=' are ignored.
+		std::optional<std::string> CommentedKey(const std::string& a_line)
+		{
+			const auto trimmed = Trim(a_line);
+			if (trimmed.empty() || (trimmed.front() != ';' && trimmed.front() != '#')) {
+				return std::nullopt;
+			}
+			const auto start = trimmed.find_first_not_of(";# \t");
+			if (start == std::string::npos) {
+				return std::nullopt;
+			}
+			if (const auto parsed = ParseKeyLine(trimmed.substr(start)); parsed && FindField(parsed->key)) {
+				return parsed->key;
+			}
+			return std::nullopt;
+		}
+
+		// Creates the player's settings file from the defaults the first time, and afterwards
+		// adds any option that a newer version introduced. Nothing the player has set, changed
+		// or commented out is ever touched.
+		void PrepareUserFile()
+		{
+			const auto user = UserPath();
+			const auto defaultsPath = std::filesystem::path(DEFAULTS_PATH);
+			if (user == defaultsPath) {
+				return;
+			}
+			const auto defaults = ReadIni(defaultsPath);
+			auto       mine = ReadIni(user);
+
+			if (!mine.exists) {
+				IniFile created;
+				created.crlf = defaults.exists ? defaults.crlf : true;
+				created.lines = {
+					"; Fast Travel Time Info - your settings",
+					"; This file is yours: installing an update never replaces it. Options that a new",
+					"; version adds are copied in here automatically, with their default values.",
+				};
+				if (defaults.exists) {
+					for (const auto& line : defaults.lines) {
+						if (!Trim(line).starts_with(DEFAULTS_ONLY_MARK)) {
+							created.lines.push_back(line);
+						}
+					}
+				} else {
+					// No defaults file either: write every option with its default value.
+					const Settings           values;
+					std::string              section;
+					for (const auto& field : Fields()) {
+						if (field.section != section) {
+							section = field.section;
+							created.lines.emplace_back();
+							created.lines.push_back(std::format("[{}]", section));
+						}
+						created.lines.push_back(std::format("{} = {}", field.name, field.format(values)));
+					}
+				}
+				if (WriteIni(user, created)) {
+					logs::info("Created your settings file {} from the defaults", user.string());
+				}
+				return;
+			}
+			if (!defaults.exists) {
+				return;
+			}
+
+			// What the player's file already mentions: options set, or commented out on purpose.
+			std::set<std::string>              known;
+			std::map<std::string, std::size_t> sectionLastLine;  // lower-case section -> last non-blank line
+			std::string                        section;
+			for (std::size_t i = 0; i < mine.lines.size(); ++i) {
+				const auto& line = mine.lines[i];
+				if (const auto name = SectionName(line)) {
+					section = *name;
+					sectionLastLine[section] = i;
+					continue;
+				}
+				if (!Trim(line).empty()) {
+					sectionLastLine[section] = i;
+				}
+				if (const auto parsed = ParseKeyLine(line)) {
+					known.insert(parsed->key);
+				} else if (const auto key = CommentedKey(line)) {
+					known.insert(*key);
+				}
+			}
+
+			// Options in the defaults that the player's file lacks, each with the comment lines
+			// that explain it.
+			std::map<std::string, std::vector<std::string>> additions;  // section -> lines to add
+			std::map<std::string, std::string>               sectionHeaders;
+			std::vector<std::string>                         sectionOrder;
+			std::vector<std::string>                         addedNames;
+			std::vector<std::string>                         comments;
+			section.clear();
+			for (const auto& line : defaults.lines) {
+				const auto trimmed = Trim(line);
+				if (const auto name = SectionName(line)) {
+					section = *name;
+					sectionHeaders[section] = trimmed;
+					comments.clear();
+					continue;
+				}
+				if (trimmed.empty()) {
+					comments.clear();
+					continue;
+				}
+				if (trimmed.starts_with(DEFAULTS_ONLY_MARK)) {
+					continue;
+				}
+				std::optional<std::string> key;
+				std::string                displayName;
+				if (const auto parsed = ParseKeyLine(line)) {
+					key = parsed->key;
+					displayName = Trim(std::string_view(line).substr(0, line.find('=')));
+				} else {
+					key = CommentedKey(line);
+				}
+				if (!key) {
+					comments.push_back(line);  // explanation for the option that follows
+					continue;
+				}
+				if (!known.contains(*key)) {
+					known.insert(*key);
+					if (!additions.contains(section)) {
+						sectionOrder.push_back(section);
+					}
+					auto& block = additions[section];
+					if (!comments.empty()) {
+						block.emplace_back();  // a blank line before each explained option, as in the defaults
+						block.insert(block.end(), comments.begin(), comments.end());
+					}
+					block.push_back(line);
+					addedNames.push_back(displayName.empty() ? *key : displayName);
+				}
+				comments.clear();
+			}
+			if (additions.empty()) {
+				return;
+			}
+
+			// Into existing sections, last first so earlier positions stay valid.
+			std::vector<std::pair<std::size_t, std::string>> inserts;
+			for (const auto& key : sectionOrder) {
+				if (const auto it = sectionLastLine.find(key); it != sectionLastLine.end() && !key.empty()) {
+					inserts.emplace_back(it->second, key);
+				}
+			}
+			std::ranges::sort(inserts, std::greater{});
+			for (const auto& [after, key] : inserts) {
+				auto& lines = additions[key];
+				if (lines.empty() || !lines.front().empty()) {
+					lines.insert(lines.begin(), std::string{});  // keep a blank line after the existing options
+				}
+				mine.lines.insert(mine.lines.begin() + static_cast<std::ptrdiff_t>(after + 1), lines.begin(), lines.end());
+				additions.erase(key);
+			}
+			// Sections the player's file does not have yet go at the end.
+			for (const auto& key : sectionOrder) {
+				const auto it = additions.find(key);
+				if (it == additions.end()) {
+					continue;
+				}
+				if (!mine.lines.empty() && !Trim(mine.lines.back()).empty()) {
+					mine.lines.emplace_back();
+				}
+				if (!key.empty()) {
+					mine.lines.push_back(sectionHeaders.contains(key) ? sectionHeaders[key] : std::format("[{}]", key));
+				}
+				auto lines = it->second;
+				if (!lines.empty() && lines.front().empty()) {
+					lines.erase(lines.begin());  // no blank line straight after the section header
+				}
+				mine.lines.insert(mine.lines.end(), lines.begin(), lines.end());
+			}
+
+			if (WriteIni(user, mine)) {
+				std::string list;
+				for (const auto& name : addedNames) {
+					list += (list.empty() ? "" : ", ") + name;
+				}
+				logs::info("Added new option(s) to your settings file: {}", list);
+			}
 		}
 	}
 
@@ -281,14 +508,21 @@ namespace FTI
 		++g_version;
 	}
 
+	std::string Settings::FilePath()
+	{
+		return UserPath().string();
+	}
+
 	Settings Settings::LoadFromIni()
 	{
-		Settings result;
-		const auto ini = ReadIni();
+		Settings   result;
+		const auto path = UserPath();
+		const auto ini = ReadIni(path);
 		if (!ini.exists) {
-			logs::info("No INI found at {}, using defaults", INI_PATH);
+			logs::info("No settings file at {}, using defaults", path.string());
 			return result;
 		}
+		logs::info("Settings file: {}", path.string());
 		for (const auto& line : ini.lines) {
 			if (const auto parsed = ParseKeyLine(line)) {
 				if (const auto field = FindField(parsed->key)) {
@@ -304,12 +538,18 @@ namespace FTI
 
 	void Settings::Reload()
 	{
+		try {
+			PrepareUserFile();
+		} catch (const std::exception& e) {
+			logs::warn("Could not prepare your settings file: {}", e.what());
+		}
 		Set(LoadFromIni());
 	}
 
 	bool Settings::SaveToIni(const Settings& a_settings)
 	{
-		auto           ini = ReadIni();
+		const auto     path = UserPath();
+		auto           ini = ReadIni(path);
 		const Settings defaults;
 		const auto&    fields = Fields();
 
@@ -411,23 +651,10 @@ namespace FTI
 			return true;
 		}
 
-		// Write in place (not via a temporary file) so that a mod manager's hard link to
-		// this file stays intact and its copy of the INI stays in sync.
-		std::ofstream file{ std::filesystem::path(INI_PATH), std::ios::binary | std::ios::trunc };
-		if (!file) {
-			logs::warn("Could not write {}", INI_PATH);
+		if (!WriteIni(path, ini)) {
 			return false;
 		}
-		const std::string_view eol = ini.crlf ? "\r\n" : "\n";
-		for (const auto& line : ini.lines) {
-			file << line << eol;
-		}
-		file.flush();
-		if (!file) {
-			logs::warn("Writing {} failed", INI_PATH);
-			return false;
-		}
-		logs::info("Settings saved to {}", INI_PATH);
+		logs::info("Settings saved to {}", path.string());
 		return true;
 	}
 }

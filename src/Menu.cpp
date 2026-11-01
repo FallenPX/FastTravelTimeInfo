@@ -102,7 +102,7 @@ namespace FTI::Menu
 		{
 			Settings::Set(std::move(a_settings));
 			if (!Settings::SaveToIni(*Settings::Current())) {
-				ShowMessage("Applied, but could not save to FastTravelTimeInfo.ini.");
+				ShowMessage("Applied, but could not save to your settings file.");
 			}
 		}
 
@@ -279,12 +279,13 @@ namespace FTI::Menu
 		void RenderFile()
 		{
 			ImGuiMCP::SeparatorText("Settings file");
-			ImGuiMCP::TextWrapped("%s", "Changes made here are saved to Data\\SKSE\\Plugins\\FastTravelTimeInfo.ini straight away.");
+			ImGuiMCP::TextWrapped("%s", "Changes made here are saved straight away to your settings file, which updates never replace:");
+			ImGuiMCP::TextDisabled("%s", Settings::FilePath().c_str());
 			if (ImGuiMCP::Button("Reload INI")) {
 				Settings::Reload();
-				ShowMessage("Settings reloaded from FastTravelTimeInfo.ini.");
+				ShowMessage("Settings reloaded from your settings file.");
 			}
-			Tooltip("Use this after editing the INI while the game is running.");
+			Tooltip("Use this after editing your settings file while the game is running.");
 		}
 
 		void __stdcall Render()
