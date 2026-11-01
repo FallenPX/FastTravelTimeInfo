@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.3.0**: For Fast Travel Arrival Planner 0.0.10: FTTI also tells the planner the flyout's font (after the game's font configuration), its text sizes on screen and its text shadow, so the planner's panel can match any interface mod. The log records them (*Flyout text: ...*). Nothing changes on screen.
 - **0.2.0**: For Fast Travel Arrival Planner 0.0.8: FTTI tells the planner the colours of the map's location flyout, read from your interface mod while the game runs, and its own background settings, so the planner's panel can match the flyout. The log records the colours (*Flyout colours: ...*). Nothing changes on screen.
 - **0.1.9**: Estimates for trips into and out of Fort Dawnguard, out of the Forgotten Vale, and similar areas, measured between where both places sit on Skyrim's map, as the game does (tested within 2–6% of the game's time). They are marked approximate (~) and are not used for learning. Trips into the Vale still show no estimate, because the game passes no time there.
 - **0.1.8**: Fix: Markarth showed no estimate since 0.1.6. It shares no land with the area around it, which 0.1.6 took to mean it had coordinates of its own, but it sits on Skyrim's map unshifted, so its coordinates are Skyrim's. Areas like it count as part of Skyrim again. The log now also gives positions for trips without an estimate.

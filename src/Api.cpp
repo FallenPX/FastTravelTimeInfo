@@ -73,7 +73,22 @@ namespace FTI::Api
 			}
 		}
 
-		std::uint32_t FormatArrivalText(double a_hoursFromNow, char* a_buffer, std::uint32_t a_size)
+		bool GetFlyoutText(FTTI_API::FlyoutText* a_out, std::uint32_t a_size)
+		{
+			if (!a_out || a_size == 0) {
+				return false;
+			}
+			FTTI_API::FlyoutText text;
+			try {
+				MapMenuHook::GetFlyoutText(text);
+			} catch (...) {
+				text = FTTI_API::FlyoutText{};
+			}
+			std::memcpy(a_out, &text, (std::min)(static_cast<std::size_t>(a_size), sizeof(text)));
+			return text.known;
+		}
+
+				std::uint32_t FormatArrivalText(double a_hoursFromNow, char* a_buffer, std::uint32_t a_size)
 		{
 			try {
 				return CopyOut(FormatArrival(a_hoursFromNow), a_buffer, a_size);
@@ -97,6 +112,7 @@ namespace FTI::Api
 		g_interface.FormatDuration = FormatDurationText;
 		g_interface.FormatArrival = FormatArrivalText;
 		g_interface.GetFlyoutStyle = GetFlyoutStyle;
+		g_interface.GetFlyoutText = GetFlyoutText;
 
 		const auto messaging = SKSE::GetMessagingInterface();
 		if (!messaging) {

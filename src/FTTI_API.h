@@ -23,8 +23,9 @@ namespace FTTI_API
 	inline constexpr const char*   PLUGIN_NAME = "FastTravelTimeInfo";
 	inline constexpr const char*   PLANNER_NAME = "FastTravelArrivalPlanner";
 	inline constexpr std::uint32_t MESSAGE_INTERFACE = 0x46545449;  // 'FTTI'
-	inline constexpr std::uint32_t INTERFACE_VERSION = 2;
+	inline constexpr std::uint32_t INTERFACE_VERSION = 3;
 	inline constexpr std::uint32_t FLYOUT_STYLE_VERSION = 2;  // first version with GetFlyoutStyle
+	inline constexpr std::uint32_t FLYOUT_TEXT_VERSION = 3;   // first version with GetFlyoutText
 
 	struct TripInfo
 	{
@@ -47,6 +48,23 @@ namespace FTTI_API
 		std::uint32_t backgroundColor{ 0x000000 };
 		float         backgroundOpacity{ 0.6f };  // 0 to 1
 		float         cornerRadius{ 3.0f };       // in the map's own pixels (1280 x 720 layout)
+	};
+
+	// How the flyout's text is drawn: font, on-screen size and shadow (version 3). Only ever
+	// add members at the end: GetFlyoutText copies no more than the caller's size.
+	struct FlyoutText
+	{
+		bool          known{ false };            // read from the flyout this session
+		char          titleFont[64]{};           // font face after the game's font configuration ("" = unknown)
+		char          rowFont[64]{};
+		float         titleSize{ 0.0f };         // font size in screen pixels (0 = unknown)
+		float         rowSize{ 0.0f };
+		bool          shadow{ false };           // the text has a drop shadow or glow
+		std::uint32_t shadowColor{ 0x000000 };   // 0xRRGGBB
+		float         shadowAlpha{ 0.0f };       // 0 to 1
+		float         shadowDistance{ 0.0f };    // screen pixels (0 = a glow around the text)
+		float         shadowAngle{ 45.0f };      // degrees: 0 = right, 90 = down
+		float         shadowBlur{ 0.0f };        // screen pixels
 	};
 
 	struct Interface
@@ -73,5 +91,11 @@ namespace FTTI_API
 		// The flyout's colours (read from the map while the game runs) and FTTI's background
 		// settings. Returns a_out->colorsKnown; the background fields are always filled.
 		bool (*GetFlyoutStyle)(FlyoutStyle* a_out);
+
+		// ---- Version 3 ----
+
+		// The flyout's font, text sizes and shadow, read from the map while the game runs.
+		// a_size is sizeof(FlyoutText) on the caller's side. Returns a_out->known.
+		bool (*GetFlyoutText)(FlyoutText* a_out, std::uint32_t a_size);
 	};
 }
