@@ -113,6 +113,77 @@ namespace FTI::MapMenuHook
 			return false;
 		}
 
+		// ---- Flyout colours, for Fast Travel Arrival Planner's panel
+
+		struct FlyoutColors
+		{
+			std::optional<std::uint32_t> title;
+			std::optional<std::uint32_t> label;
+			std::optional<std::uint32_t> value;
+		};
+
+		std::mutex   g_colorsLock;
+		FlyoutColors g_colors;  // as last read; guarded by g_colorsLock
+
+		std::optional<std::uint32_t> ReadColor(const RE::GFxValue& a_textField)
+		{
+			RE::GFxValue color;
+			if (GetMember(a_textField, "textColor", color) && color.IsNumber() && color.GetNumber() >= 0.0) {
+				return static_cast<std::uint32_t>(color.GetNumber()) & 0xFFFFFFu;
+			}
+			return std::nullopt;
+		}
+
+		// The skin (vanilla, SkyUI, Dear Diary...) decides these colours, so they are read from
+		// the flyout itself. Logged whenever they change.
+		void ReadFlyoutColors(const RE::GFxValue& a_description)
+		{
+			FlyoutColors colors;
+			RE::GFxValue title;
+			if (GetMember(a_description, "Title", title)) {
+				colors.title = ReadColor(title);
+			}
+			RE::GFxValue list;
+			if (GetMember(a_description, "DescriptionList", list) && list.IsArray()) {
+				const auto size = list.GetArraySize();
+				for (std::uint32_t i = 0; i < size && !(colors.label && colors.value); ++i) {
+					RE::GFxValue entry;
+					RE::GFxValue visible;
+					if (!list.GetElement(i, &entry) || !GetMember(entry, "_visible", visible) || !visible.IsBool() || !visible.GetBool()) {
+						continue;
+					}
+					RE::GFxValue field;
+					if (!colors.label && GetMember(entry, "Item", field)) {
+						colors.label = ReadColor(field);
+					}
+					if (!colors.value && GetMember(entry, "Value", field)) {
+						colors.value = ReadColor(field);
+					}
+				}
+			}
+			if (!colors.title && !colors.label && !colors.value) {
+				return;
+			}
+			std::lock_guard guard{ g_colorsLock };
+			const auto      same = [](const std::optional<std::uint32_t>& a, const std::optional<std::uint32_t>& b) { return a == b; };
+			if (same(colors.title, g_colors.title) && same(colors.label, g_colors.label) && same(colors.value, g_colors.value)) {
+				return;
+			}
+			// Keep earlier readings for anything not visible this time (a flyout without rows).
+			if (!colors.label) {
+				colors.label = g_colors.label;
+			}
+			if (!colors.value) {
+				colors.value = g_colors.value;
+			}
+			if (same(colors.title, g_colors.title) && same(colors.label, g_colors.label) && same(colors.value, g_colors.value)) {
+				return;
+			}
+			g_colors = colors;
+			const auto hex = [](const std::optional<std::uint32_t>& a) { return a ? std::format("#{:06X}", *a) : "unknown"s; };
+			logs::info("Flyout colours: title {}, labels {}, values {}", hex(colors.title), hex(colors.label), hex(colors.value));
+		}
+
 		std::vector<Line> ReadVisibleLines(const RE::GFxValue& a_description)
 		{
 			std::vector<Line> out;
@@ -901,6 +972,8 @@ namespace FTI::MapMenuHook
 				ComputeLines(*settings, *data, selected, title);
 			}
 
+			ReadFlyoutColors(description);
+
 			// Compare what the flyout shows with what it should show.
 			const auto        visible = ReadVisibleLines(description);
 			std::vector<Line> foreign;
@@ -1023,6 +1096,31 @@ namespace FTI::MapMenuHook
 		a_out.distance = estimate->distance;
 		a_out.speedMult = GetFastTravelSpeedMult();
 		return true;
+	}
+
+	bool GetFlyoutStyle(FTTI_API::FlyoutStyle& a_out)
+	{
+		a_out = FTTI_API::FlyoutStyle{};
+		const auto settings = Settings::Current();
+		a_out.background = settings->showBackground;
+		a_out.backgroundColor = 0x000000;  // as drawn in DrawBackground
+		a_out.backgroundOpacity = static_cast<float>(settings->backgroundOpacity) / 100.0f;
+		a_out.cornerRadius = static_cast<float>(settings->backgroundCornerRadius);
+
+		std::lock_guard guard{ g_colorsLock };
+		if (g_colors.title) {
+			a_out.titleColor = *g_colors.title;
+		}
+		if (g_colors.label) {
+			a_out.labelColor = *g_colors.label;
+		}
+		if (g_colors.value) {
+			a_out.valueColor = *g_colors.value;
+		} else if (g_colors.title) {
+			a_out.valueColor = *g_colors.title;
+		}
+		a_out.colorsKnown = g_colors.title.has_value() || g_colors.label.has_value() || g_colors.value.has_value();
+		return a_out.colorsKnown;
 	}
 
 	void Install()

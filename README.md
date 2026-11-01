@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.2.0**: For Fast Travel Arrival Planner 0.0.8: FTTI tells the planner the colours of the map's location flyout, read from your interface mod while the game runs, and its own background settings, so the planner's panel can match the flyout. The log records the colours (*Flyout colours: ...*). Nothing changes on screen.
 - **0.1.9**: Estimates for trips into and out of Fort Dawnguard, out of the Forgotten Vale, and similar areas, measured between where both places sit on Skyrim's map, as the game does (tested within 2–6% of the game's time). They are marked approximate (~) and are not used for learning. Trips into the Vale still show no estimate, because the game passes no time there.
 - **0.1.8**: Fix: Markarth showed no estimate since 0.1.6. It shares no land with the area around it, which 0.1.6 took to mean it had coordinates of its own, but it sits on Skyrim's map unshifted, so its coordinates are Skyrim's. Areas like it count as part of Skyrim again. The log now also gives positions for trips without an estimate.
 - **0.1.7**: Log only, nothing changes on screen. For a trip into or out of another worldspace, the log now records how long the game took and how far apart the two positions are, plus each area's map placement. This shows whether such an area (for example Fort Dawnguard) could share Skyrim's coordinates after all. The repeated *No estimate for ...* lines are gone: one line per pair of areas is enough.

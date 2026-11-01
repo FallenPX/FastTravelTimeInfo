@@ -23,7 +23,8 @@ namespace FTTI_API
 	inline constexpr const char*   PLUGIN_NAME = "FastTravelTimeInfo";
 	inline constexpr const char*   PLANNER_NAME = "FastTravelArrivalPlanner";
 	inline constexpr std::uint32_t MESSAGE_INTERFACE = 0x46545449;  // 'FTTI'
-	inline constexpr std::uint32_t INTERFACE_VERSION = 1;
+	inline constexpr std::uint32_t INTERFACE_VERSION = 2;
+	inline constexpr std::uint32_t FLYOUT_STYLE_VERSION = 2;  // first version with GetFlyoutStyle
 
 	struct TripInfo
 	{
@@ -33,6 +34,19 @@ namespace FTTI_API
 		double hours{ 0.0 };              // estimated in-game hours at the current fFastTravelSpeedMult
 		double distance{ 0.0 };           // straight-line distance in game units
 		float  speedMult{ 1.0f };         // the fFastTravelSpeedMult the estimate used
+	};
+
+	// How the world map's marker flyout looks, so another panel can match it (version 2).
+	struct FlyoutStyle
+	{
+		bool          colorsKnown{ false };       // read from the flyout this session
+		std::uint32_t titleColor{ 0xFFFFFF };     // 0xRRGGBB: the location name
+		std::uint32_t labelColor{ 0xBBBBBB };     // row labels, such as "Travel time:"
+		std::uint32_t valueColor{ 0xFFFFFF };     // row values
+		bool          background{ true };         // FTTI draws a background behind the flyout
+		std::uint32_t backgroundColor{ 0x000000 };
+		float         backgroundOpacity{ 0.6f };  // 0 to 1
+		float         cornerRadius{ 3.0f };       // in the map's own pixels (1280 x 720 layout)
 	};
 
 	struct Interface
@@ -53,5 +67,11 @@ namespace FTTI_API
 		// Both return the length written (0 on failure); the text is always 0-terminated.
 		std::uint32_t (*FormatDuration)(double a_hours, bool a_approx, char* a_buffer, std::uint32_t a_size);
 		std::uint32_t (*FormatArrival)(double a_hoursFromNow, char* a_buffer, std::uint32_t a_size);
+
+		// ---- Version 2 ----
+
+		// The flyout's colours (read from the map while the game runs) and FTTI's background
+		// settings. Returns a_out->colorsKnown; the background fields are always filled.
+		bool (*GetFlyoutStyle)(FlyoutStyle* a_out);
 	};
 }

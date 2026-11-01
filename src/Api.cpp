@@ -60,6 +60,19 @@ namespace FTI::Api
 			}
 		}
 
+		bool GetFlyoutStyle(FTTI_API::FlyoutStyle* a_out)
+		{
+			if (!a_out) {
+				return false;
+			}
+			try {
+				return MapMenuHook::GetFlyoutStyle(*a_out);
+			} catch (...) {
+				*a_out = FTTI_API::FlyoutStyle{};
+				return false;
+			}
+		}
+
 		std::uint32_t FormatArrivalText(double a_hoursFromNow, char* a_buffer, std::uint32_t a_size)
 		{
 			try {
@@ -83,6 +96,7 @@ namespace FTI::Api
 		g_interface.ExcludeNextTrip = ExcludeNextTrip;
 		g_interface.FormatDuration = FormatDurationText;
 		g_interface.FormatArrival = FormatArrivalText;
+		g_interface.GetFlyoutStyle = GetFlyoutStyle;
 
 		const auto messaging = SKSE::GetMessagingInterface();
 		if (!messaging) {
