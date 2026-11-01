@@ -540,17 +540,67 @@ namespace FTI::MapMenuHook
 
 		// ---- Worldspaces
 		//
-		// Distances only mean something within one world. Child worldspaces (the walled cities,
-		// such as Whiterun) share their parent's coordinates and map, so worlds are compared by
-		// their top-most parent. A trip into another world (for example the Forgotten Vale or
-		// Solstheim) gets no estimate and is never used for calibration.
+		// Distances only mean something within one set of coordinates. A child worldspace that
+		// takes its parent's land or distant terrain (the walled cities, such as Whiterun) is
+		// built on the parent's coordinates, so it counts as the parent. A child that only
+		// borrows its parent's map (the Forgotten Vale, shown on Skyrim's map) has coordinates
+		// of its own and counts as another world.
+		// A trip into or out of another world gets no estimate and is never used for calibration.
+		// (0.1.4 and 0.1.5 counted every child as its parent, which let the Forgotten Vale through.)
 
-		RE::TESWorldSpace* RootWorldspace(RE::TESWorldSpace* a_world)
+		bool SharesParentCoordinates(const RE::TESWorldSpace* a_world)
 		{
-			for (int depth = 0; a_world && a_world->parentWorld && depth < 16; ++depth) {
+			using Flag = RE::TESWorldSpace::ParentUseFlag;
+			return a_world && a_world->parentWorld && a_world->parentUseFlags.any(Flag::kUseLandData, Flag::kUseLODData);
+		}
+
+		// The world whose coordinates a worldspace uses.
+		RE::TESWorldSpace* CoordinateWorld(RE::TESWorldSpace* a_world)
+		{
+			for (int depth = 0; SharesParentCoordinates(a_world) && depth < 16; ++depth) {
 				a_world = a_world->parentWorld;
 			}
 			return a_world;
+		}
+
+		std::string WorldName(const RE::TESWorldSpace* a_world)
+		{
+			const char* id = a_world->GetFormEditorID();
+			return std::format("{} ({:08X})", id && *id ? id : "?", a_world->GetFormID());
+		}
+
+		std::string DescribeWorld(const RE::TESWorldSpace* a_world)
+		{
+			if (!a_world) {
+				return "unknown";
+			}
+			auto text = WorldName(a_world);
+			if (a_world->parentWorld) {
+				text += std::format(" [parent {}, parent flags {:02X}: {}]", WorldName(a_world->parentWorld),
+					a_world->parentUseFlags.underlying(), SharesParentCoordinates(a_world) ? "same coordinates" : "own coordinates");
+			}
+			return text;
+		}
+
+		// Logs the decision once per pair of worlds and game session, so it can be checked.
+		// Trips within one worldspace, the usual case, are not logged.
+		void LogWorlds(const RE::TESWorldSpace* a_origin, const RE::TESWorldSpace* a_destination, bool a_other)
+		{
+			if (a_origin && a_origin == a_destination) {
+				return;
+			}
+			static std::mutex                                   lock;
+			static std::vector<std::pair<RE::FormID, RE::FormID>> logged;
+			const std::pair key{ a_origin ? a_origin->GetFormID() : 0u, a_destination ? a_destination->GetFormID() : 0u };
+			{
+				std::scoped_lock guard{ lock };
+				if (std::find(logged.begin(), logged.end(), key) != logged.end()) {
+					return;
+				}
+				logged.push_back(key);
+			}
+			logs::info("Worlds: from {} to {}: {}", DescribeWorld(a_origin), DescribeWorld(a_destination),
+				a_other ? "another world, no estimate" : (a_origin && a_destination ? "same coordinates, estimate given" : "not known, estimate given"));
 		}
 
 		// The world the trip starts in: the player's own when outdoors, otherwise the one the
@@ -570,9 +620,13 @@ namespace FTI::MapMenuHook
 		// True only when both worlds are known and differ.
 		bool IsOtherWorldspace(const RE::TESObjectREFR& a_destination, const RE::MapMenu::RUNTIME_DATA2* a_data)
 		{
-			const auto destination = RootWorldspace(a_destination.GetWorldspace());
-			const auto origin = RootWorldspace(OriginWorldspace(a_data));
-			return destination && origin && destination != origin;
+			const auto destinationWorld = a_destination.GetWorldspace();
+			const auto originWorld = OriginWorldspace(a_data);
+			const auto destination = CoordinateWorld(destinationWorld);
+			const auto origin = CoordinateWorld(originWorld);
+			const bool other = destination && origin && destination != origin;
+			LogWorlds(originWorld, destinationWorld, other);
+			return other;
 		}
 
 		void ComputeLines(const Settings& settings, const RE::MapMenu::RUNTIME_DATA2& a_data, std::int32_t a_selected, const std::string& a_title)

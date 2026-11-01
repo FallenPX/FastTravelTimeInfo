@@ -27,7 +27,7 @@ The learned values are saved in `Documents\My Games\Skyrim Special Edition\SKSE\
 
 Carriage rides are not used for learning.
 
-Distances only mean something within one world. A marker in a different worldspace from the one you start in (for example a trip into or out of the Forgotten Vale) shows no estimate and is never used for learning. The walled cities, such as Whiterun, count as part of the world around them.
+Distances only mean something within one set of coordinates. A trip into or out of an area with coordinates of its own shows no estimate and is never used for learning. That includes the Forgotten Vale, which uses Skyrim's map but is a separate worldspace, and any similar area. The walled cities, such as Whiterun, are built on the coordinates of the land around them and count as part of it.
 
 ## Getting the DLL (no programming needed)
 
@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.1.6**: Fix: trips into and out of the Forgotten Vale got an estimate (a wrong one) and could be used for learning. The Vale uses Skyrim's map, and 0.1.5 counted every area linked to Skyrim in this way as part of it. Now only areas built on Skyrim's own coordinates count as part of it (the walled cities); the Vale and similar areas count as separate. The log records each such decision once per session. Settings are kept as in 0.1.5.
 - **0.1.5**: Your settings now live in their own file (`Documents\My Games\Skyrim Special Edition\SKSE\FastTravelTimeInfo.ini`), so updates no longer reset them; options added by future versions are merged in automatically. **Updating from 0.1.4 or earlier:** to keep settings you changed, copy your current `Data\SKSE\Plugins\FastTravelTimeInfo.ini` (in Vortex: right-click the mod → *Open in File Manager*) into that Documents folder *before* installing this version.
 - **0.1.4**: No estimate (and no learning) for markers in another worldspace. Interface for the optional Fast Travel Arrival Planner add-on; without the add-on nothing changes.
 - **0.1.3**: The flyout background now sits behind the text (it covered it before); less space above the location name; adjustable corner rounding (`iBackgroundCornerRadius`, also in the in-game menu).
