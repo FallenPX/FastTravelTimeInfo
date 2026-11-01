@@ -39,8 +39,10 @@ namespace FTI
 		// Called when the player confirms a fast travel from the world map.
 		void ArmTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to);
 		// Called instead when the trip had no estimate (another worldspace). Never learned
-		// from; only what the game charges is logged.
-		void NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const std::string& a_title);
+		// from; only what the game charges is logged, against both the raw positions and the
+		// positions as drawn on the map.
+		void NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const RE::NiPoint3& a_fromMap,
+			const RE::NiPoint3& a_toMap, const std::string& a_title);
 		// The next armed trip is not learned from (requested by Fast Travel Arrival Planner,
 		// whose trips deliberately take a different time). Expires after two minutes.
 		void ExcludeNextTrip();
@@ -68,6 +70,8 @@ namespace FTI
 		{
 			RE::NiPoint3                          from;
 			RE::NiPoint3                          to;
+			RE::NiPoint3                          fromMap;
+			RE::NiPoint3                          toMap;
 			std::string                           title;
 			float                                 mult{ 1.0f };
 			float                                 timescale{ 20.0f };

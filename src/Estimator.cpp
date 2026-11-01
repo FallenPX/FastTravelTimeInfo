@@ -266,29 +266,32 @@ namespace FTI
 		logs::debug("Trip armed: {:.0f} units", Distance(a_from, a_to));
 	}
 
-	void Estimator::NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const std::string& a_title)
+	void Estimator::NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const RE::NiPoint3& a_fromMap,
+		const RE::NiPoint3& a_toMap, const std::string& a_title)
 	{
 		std::lock_guard guard{ _lock };
 		_pending.reset();
-		_unestimated = UnestimatedTrip{ a_from, a_to, a_title, GetFastTravelSpeedMult(), GetTimescale(), std::chrono::steady_clock::now() };
-		logs::info("Trip to \"{}\" confirmed without an estimate (another worldspace): not used for calibration", a_title);
+		_unestimated = UnestimatedTrip{ a_from, a_to, a_fromMap, a_toMap, a_title, GetFastTravelSpeedMult(), GetTimescale(),
+			std::chrono::steady_clock::now() };
 	}
 
 	// Diagnostics: what the game charged for a trip into or out of another worldspace, and the
-	// speed that would mean if both places used the same coordinates. A speed close to the
-	// learned one suggests they do.
+	// speed that would mean for the raw positions and for the positions as drawn on the map.
+	// A speed close to the learned one suggests the game measures the trip that way.
 	void Estimator::LogUnestimatedTripLocked(const UnestimatedTrip& a_trip, float a_hours) const
 	{
-		const double distance = Distance(a_trip.from, a_trip.to);
+		const double raw = Distance(a_trip.from, a_trip.to);
+		const double onMap = Distance(a_trip.fromMap, a_trip.toMap);
 		if (a_hours <= 0.001f) {
-			logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown): the game passed no time. Positions {:.0f} units apart",
-				a_hours, a_trip.title, distance);
+			logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown): the game passed no time. "
+					   "Raw positions {:.0f} units apart, {:.0f} on the map",
+				a_hours, a_trip.title, raw, onMap);
 			return;
 		}
-		const double speed = distance * a_trip.timescale / (3600.0 * static_cast<double>(a_hours) * a_trip.mult);
-		logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown). Positions {:.0f} units apart: "
-				   "if both used the same coordinates, that would mean speed {:.1f} (learned speed {:.1f})",
-			a_hours, a_trip.title, distance, speed, SpeedLocked());
+		const double factor = a_trip.timescale / (3600.0 * static_cast<double>(a_hours) * a_trip.mult);
+		logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown). Raw positions {:.0f} units apart "
+				   "(speed {:.1f}), {:.0f} on the map (speed {:.1f}); learned speed {:.1f}",
+			a_hours, a_trip.title, raw, raw * factor, onMap, onMap * factor, SpeedLocked());
 	}
 
 	void Estimator::ExcludeNextTrip()

@@ -37,6 +37,8 @@ namespace FTI::MapMenuHook
 			std::vector<Line>           lines;    // our rows for the current marker
 			std::optional<RE::NiPoint3> destPos;  // current marker position (for calibration)
 			std::optional<RE::NiPoint3> otherWorldPos;  // marker in another worldspace (log only)
+			RE::TESWorldSpace*          otherWorld{ nullptr };
+			std::string                 otherWorldTitle;
 			std::vector<std::string>    staleItems;  // labels used earlier for this marker
 			std::uint32_t               settingsVersion{ 0 };
 			int                         failedApplies{ 0 };
@@ -541,18 +543,52 @@ namespace FTI::MapMenuHook
 
 		// ---- Worldspaces
 		//
-		// Distances only mean something within one set of coordinates. A child worldspace that
-		// takes its parent's land or distant terrain (the walled cities, such as Whiterun) is
-		// built on the parent's coordinates, so it counts as the parent. A child that only
-		// borrows its parent's map (the Forgotten Vale, shown on Skyrim's map) has coordinates
-		// of its own and counts as another world.
-		// A trip into or out of another world gets no estimate and is never used for calibration.
-		// (0.1.4 and 0.1.5 counted every child as its parent, which let the Forgotten Vale through.)
+		// Distances only mean something within one set of coordinates. A child worldspace counts
+		// as its parent when it is built on the parent's coordinates:
+		// - it takes the parent's land or distant terrain (Whiterun, Riften, Windhelm, Solitude), or
+		// - it draws its markers on the parent's map without moving or scaling them (map scale 1,
+		//   offset 0: Markarth). A marker can only sit in the right place on the parent's map
+		//   then if its coordinates are the parent's.
+		// A child drawn on the parent's map with an offset or a scale (the Forgotten Vale, Fort
+		// Dawnguard) has coordinates of its own and counts as another world. A trip into or out
+		// of another world gets no estimate and is never used for calibration.
+		// (0.1.4 and 0.1.5 counted every child as its parent, which let the Forgotten Vale through;
+		// 0.1.6 and 0.1.7 checked only land and distant terrain, which shut Markarth out.)
+
+		bool HasIdentityMap(const RE::TESWorldSpace* a_world)
+		{
+			const auto& map = a_world->worldMapOffsetData;
+			return std::abs(map.mapScale - 1.0f) < 1.0e-4f && std::abs(map.mapOffsetX) < 1.0f &&
+			       std::abs(map.mapOffsetY) < 1.0f && std::abs(map.mapOffsetZ) < 1.0f;
+		}
 
 		bool SharesParentCoordinates(const RE::TESWorldSpace* a_world)
 		{
 			using Flag = RE::TESWorldSpace::ParentUseFlag;
-			return a_world && a_world->parentWorld && a_world->parentUseFlags.any(Flag::kUseLandData, Flag::kUseLODData);
+			if (!a_world || !a_world->parentWorld) {
+				return false;
+			}
+			if (a_world->parentUseFlags.any(Flag::kUseLandData, Flag::kUseLODData)) {
+				return true;
+			}
+			return a_world->parentUseFlags.any(Flag::kUseMapData) && HasIdentityMap(a_world);
+		}
+
+		// Diagnostics only: a position as drawn on the map of the top-most world, taking each
+		// child's map scale and offset as position * scale + offset.
+		RE::NiPoint3 MapPosition(const RE::TESWorldSpace* a_world, RE::NiPoint3 a_pos)
+		{
+			using Flag = RE::TESWorldSpace::ParentUseFlag;
+			for (int depth = 0; a_world && a_world->parentWorld && depth < 16; ++depth) {
+				if (!a_world->parentUseFlags.any(Flag::kUseMapData)) {
+					break;
+				}
+				const auto& map = a_world->worldMapOffsetData;
+				a_pos = { a_pos.x * map.mapScale + map.mapOffsetX, a_pos.y * map.mapScale + map.mapOffsetY,
+					a_pos.z * map.mapScale + map.mapOffsetZ };
+				a_world = a_world->parentWorld;
+			}
+			return a_pos;
 		}
 
 		// The world whose coordinates a worldspace uses.
@@ -658,6 +694,8 @@ namespace FTI::MapMenuHook
 				// No rows and no destPos, so the trip is never used for calibration. The position
 				// is kept only to log what the game charges if the player goes there anyway.
 				g_state.otherWorldPos = ref->GetPosition();
+				g_state.otherWorld = ref->GetWorldspace();
+				g_state.otherWorldTitle = a_title;
 				logs::debug("No estimate for \"{}\": it is in another worldspace", a_title);
 				return;
 			}
@@ -691,7 +729,13 @@ namespace FTI::MapMenuHook
 				if (g_state.destPos) {
 					Estimator::Get().ArmTrip(*origin, *g_state.destPos);
 				} else if (g_state.otherWorldPos) {
-					Estimator::Get().NoteUnestimatedTrip(*origin, *g_state.otherWorldPos, g_state.title);
+					const auto originWorld = OriginWorldspace(&a_data);
+					logs::info("Trip to \"{}\" without an estimate: from ({:.0f}, {:.0f}, {:.0f}) in {} to ({:.0f}, {:.0f}, {:.0f}) in {}",
+						g_state.otherWorldTitle, origin->x, origin->y, origin->z, originWorld ? WorldName(originWorld) : "unknown"s,
+						g_state.otherWorldPos->x, g_state.otherWorldPos->y, g_state.otherWorldPos->z,
+						g_state.otherWorld ? WorldName(g_state.otherWorld) : "unknown"s);
+					Estimator::Get().NoteUnestimatedTrip(*origin, *g_state.otherWorldPos, MapPosition(originWorld, *origin),
+						MapPosition(g_state.otherWorld, *g_state.otherWorldPos), g_state.otherWorldTitle);
 				}
 			}
 		}
