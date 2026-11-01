@@ -266,13 +266,17 @@ namespace FTI
 		logs::debug("Trip armed: {:.0f} units", Distance(a_from, a_to));
 	}
 
-	void Estimator::NoteUnestimatedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const RE::NiPoint3& a_fromMap,
-		const RE::NiPoint3& a_toMap, const std::string& a_title)
+	void Estimator::NoteUnlearnedTrip(const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, const RE::NiPoint3& a_fromMap,
+		const RE::NiPoint3& a_toMap, const std::string& a_title, std::optional<double> a_estimatedHours)
 	{
 		std::lock_guard guard{ _lock };
+		const auto now = std::chrono::steady_clock::now();
+		// A request from Fast Travel Arrival Planner is used up here, so it cannot reach a later trip.
+		const bool planned = _excludeUntil && now < *_excludeUntil;
+		_excludeUntil.reset();
 		_pending.reset();
-		_unestimated = UnestimatedTrip{ a_from, a_to, a_fromMap, a_toMap, a_title, GetFastTravelSpeedMult(), GetTimescale(),
-			std::chrono::steady_clock::now() };
+		_unestimated = UnestimatedTrip{ a_from, a_to, a_fromMap, a_toMap, a_title, a_estimatedHours, planned,
+			GetFastTravelSpeedMult(), GetTimescale(), now };
 	}
 
 	// Diagnostics: what the game charged for a trip into or out of another worldspace, and the
@@ -283,15 +287,20 @@ namespace FTI
 		const double raw = Distance(a_trip.from, a_trip.to);
 		const double onMap = Distance(a_trip.fromMap, a_trip.toMap);
 		if (a_hours <= 0.001f) {
-			logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown): the game passed no time. "
+			logs::info("Fast travel ended: game reports {:.3f} h for \"{}\": the game passed no time. "
 					   "Raw positions {:.0f} units apart, {:.0f} on the map",
 				a_hours, a_trip.title, raw, onMap);
 			return;
 		}
 		const double factor = a_trip.timescale / (3600.0 * static_cast<double>(a_hours) * a_trip.mult);
-		logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" (no estimate shown). Raw positions {:.0f} units apart "
+		auto estimate = a_trip.estimatedHours ? std::format("estimate {:.3f} h for a normal trip, not used for calibration", *a_trip.estimatedHours) :
+		                                        "no estimate shown"s;
+		if (a_trip.planned) {
+			estimate += ", planned by Fast Travel Arrival Planner";
+		}
+		logs::info("Fast travel ended: game reports {:.3f} h for \"{}\" ({}). Raw positions {:.0f} units apart "
 				   "(speed {:.1f}), {:.0f} on the map (speed {:.1f}); learned speed {:.1f}",
-			a_hours, a_trip.title, raw, raw * factor, onMap, onMap * factor, SpeedLocked());
+			a_hours, a_trip.title, estimate, raw, raw * factor, onMap, onMap * factor, SpeedLocked());
 	}
 
 	void Estimator::ExcludeNextTrip()

@@ -30,15 +30,21 @@ namespace FTI::MapMenuHook
 			bool operator==(const Line&) const = default;
 		};
 
+		struct UnlearnedTrip
+		{
+			RE::NiPoint3             to;  // the marker's own position
+			const RE::TESWorldSpace* world{ nullptr };
+			std::string              title;
+			std::optional<double>    hours;  // the estimate shown, if any
+		};
+
 		struct HoverState
 		{
 			std::int32_t                selected{ -1 };
 			std::string                 title;
 			std::vector<Line>           lines;    // our rows for the current marker
 			std::optional<RE::NiPoint3> destPos;  // current marker position (for calibration)
-			std::optional<RE::NiPoint3> otherWorldPos;  // marker in another worldspace (log only)
-			RE::TESWorldSpace*          otherWorld{ nullptr };
-			std::string                 otherWorldTitle;
+			std::optional<UnlearnedTrip> unlearned;  // a trip not used for calibration (log only)
 			std::vector<std::string>    staleItems;  // labels used earlier for this marker
 			std::uint32_t               settingsVersion{ 0 };
 			int                         failedApplies{ 0 };
@@ -543,17 +549,18 @@ namespace FTI::MapMenuHook
 
 		// ---- Worldspaces
 		//
-		// Distances only mean something within one set of coordinates. A child worldspace counts
-		// as its parent when it is built on the parent's coordinates:
-		// - it takes the parent's land or distant terrain (Whiterun, Riften, Windhelm, Solitude), or
-		// - it draws its markers on the parent's map without moving or scaling them (map scale 1,
-		//   offset 0: Markarth). A marker can only sit in the right place on the parent's map
-		//   then if its coordinates are the parent's.
-		// A child drawn on the parent's map with an offset or a scale (the Forgotten Vale, Fort
-		// Dawnguard) has coordinates of its own and counts as another world. A trip into or out
-		// of another world gets no estimate and is never used for calibration.
-		// (0.1.4 and 0.1.5 counted every child as its parent, which let the Forgotten Vale through;
-		// 0.1.6 and 0.1.7 checked only land and distant terrain, which shut Markarth out.)
+		// The game measures a fast travel between where both places are drawn on the world map.
+		// A child worldspace drawn on its parent's map (Fort Dawnguard and the Forgotten Vale on
+		// Skyrim's) places its markers at position * map scale + map offset; the walled cities are
+		// built on Skyrim's own coordinates and need no conversion. Trips into and out of such
+		// areas are estimated from those map positions, which matched the game within a few
+		// percent (Fort Dawnguard both ways, out of the Vale). They are not used for calibration.
+		// Exceptions, with no estimate:
+		// - areas drawn at a different scale (the Forgotten Vale): the game passed no time going
+		//   in, whatever the distance, so trips into them (or within them) are not estimated;
+		// - places on different maps (Solstheim and Skyrim).
+		// (0.1.4-0.1.5 compared raw positions across worlds; 0.1.6-0.1.8 gave no estimate at all
+		// for Fort Dawnguard, the Vale and similar areas.)
 
 		bool HasIdentityMap(const RE::TESWorldSpace* a_world)
 		{
@@ -562,6 +569,8 @@ namespace FTI::MapMenuHook
 			       std::abs(map.mapOffsetY) < 1.0f && std::abs(map.mapOffsetZ) < 1.0f;
 		}
 
+		// Built on the parent's coordinates: takes its land or distant terrain (Whiterun, Riften,
+		// Windhelm, Solitude), or is drawn on its map unmoved and unscaled (Markarth).
 		bool SharesParentCoordinates(const RE::TESWorldSpace* a_world)
 		{
 			using Flag = RE::TESWorldSpace::ParentUseFlag;
@@ -574,45 +583,71 @@ namespace FTI::MapMenuHook
 			return a_world->parentUseFlags.any(Flag::kUseMapData) && HasIdentityMap(a_world);
 		}
 
-		// Diagnostics only: a position as drawn on the map of the top-most world, taking each
-		// child's map scale and offset as position * scale + offset.
-		RE::NiPoint3 MapPosition(const RE::TESWorldSpace* a_world, RE::NiPoint3 a_pos)
+		struct Placement
+		{
+			const RE::TESWorldSpace* map{ nullptr };  // the world whose map shows this place
+			RE::NiPoint3             pos;             // the position on that map
+			bool                     moved{ false };   // converted with a map offset or scale
+			bool                     scaled{ false };  // drawn at a different scale
+		};
+
+		Placement PlaceOnMap(const RE::TESWorldSpace* a_world, const RE::NiPoint3& a_pos)
 		{
 			using Flag = RE::TESWorldSpace::ParentUseFlag;
-			for (int depth = 0; a_world && a_world->parentWorld && depth < 16; ++depth) {
-				if (!a_world->parentUseFlags.any(Flag::kUseMapData)) {
-					break;
+			Placement result{ a_world, a_pos };
+			for (int depth = 0; result.map && result.map->parentWorld && depth < 16; ++depth) {
+				const auto* world = result.map;
+				if (!SharesParentCoordinates(world)) {
+					if (!world->parentUseFlags.any(Flag::kUseMapData)) {
+						break;  // a world with a map of its own
+					}
+					const auto& map = world->worldMapOffsetData;
+					result.pos = { result.pos.x * map.mapScale + map.mapOffsetX, result.pos.y * map.mapScale + map.mapOffsetY,
+						result.pos.z * map.mapScale + map.mapOffsetZ };
+					result.moved = true;
+					if (std::abs(map.mapScale - 1.0f) >= 1.0e-4f) {
+						result.scaled = true;
+					}
 				}
-				const auto& map = a_world->worldMapOffsetData;
-				a_pos = { a_pos.x * map.mapScale + map.mapOffsetX, a_pos.y * map.mapScale + map.mapOffsetY,
-					a_pos.z * map.mapScale + map.mapOffsetZ };
-				a_world = a_world->parentWorld;
+				result.map = world->parentWorld;
 			}
-			return a_pos;
+			return result;
 		}
 
-		// The world whose coordinates a worldspace uses.
-		RE::TESWorldSpace* CoordinateWorld(RE::TESWorldSpace* a_world)
+		enum class TripKind
 		{
-			for (int depth = 0; SharesParentCoordinates(a_world) && depth < 16; ++depth) {
-				a_world = a_world->parentWorld;
-			}
-			return a_world;
-		}
+			kPlain,        // same coordinates: estimate, and learn from it
+			kOnMap,        // estimated from map positions, not learned from
+			kIntoScaled,   // no estimate: into an area drawn at a different scale
+			kOtherMap,     // no estimate: the two places are on different maps
+		};
+
+		struct TripPlan
+		{
+			TripKind     kind{ TripKind::kPlain };
+			RE::NiPoint3 from;  // where to measure from and to
+			RE::NiPoint3 to;
+			RE::NiPoint3 fromMap;  // the same on the map (diagnostics)
+			RE::NiPoint3 toMap;
+			const RE::TESWorldSpace* originWorld{ nullptr };
+			const RE::TESWorldSpace* destinationWorld{ nullptr };
+
+			[[nodiscard]] bool HasEstimate() const { return kind == TripKind::kPlain || kind == TripKind::kOnMap; }
+		};
 
 		std::string WorldName(const RE::TESWorldSpace* a_world)
 		{
+			if (!a_world) {
+				return "unknown";
+			}
 			const char* id = a_world->GetFormEditorID();
 			return std::format("{} ({:08X})", id && *id ? id : "?", a_world->GetFormID());
 		}
 
 		std::string DescribeWorld(const RE::TESWorldSpace* a_world)
 		{
-			if (!a_world) {
-				return "unknown";
-			}
 			auto text = WorldName(a_world);
-			if (a_world->parentWorld) {
+			if (a_world && a_world->parentWorld) {
 				const auto& map = a_world->worldMapOffsetData;
 				text += std::format(" [parent {}, parent flags {:02X}: {}; map scale {:g}, map offset ({:.0f}, {:.0f}, {:.0f})]",
 					WorldName(a_world->parentWorld), a_world->parentUseFlags.underlying(),
@@ -622,14 +657,28 @@ namespace FTI::MapMenuHook
 			return text;
 		}
 
+		const char* Describe(TripKind a_kind)
+		{
+			switch (a_kind) {
+			case TripKind::kPlain:
+				return "same coordinates, estimate given";
+			case TripKind::kOnMap:
+				return "estimate from the map positions, not used for calibration";
+			case TripKind::kIntoScaled:
+				return "destination drawn at a different scale on the map, no estimate";
+			default:
+				return "different maps, no estimate";
+			}
+		}
+
 		// Logs the decision once per pair of worlds and game session, so it can be checked.
 		// Trips within one worldspace, the usual case, are not logged.
-		void LogWorlds(const RE::TESWorldSpace* a_origin, const RE::TESWorldSpace* a_destination, bool a_other)
+		void LogWorlds(const RE::TESWorldSpace* a_origin, const RE::TESWorldSpace* a_destination, TripKind a_kind)
 		{
 			if (a_origin && a_origin == a_destination) {
 				return;
 			}
-			static std::mutex                                   lock;
+			static std::mutex                                       lock;
 			static std::vector<std::pair<RE::FormID, RE::FormID>> logged;
 			const std::pair key{ a_origin ? a_origin->GetFormID() : 0u, a_destination ? a_destination->GetFormID() : 0u };
 			{
@@ -639,8 +688,7 @@ namespace FTI::MapMenuHook
 				}
 				logged.push_back(key);
 			}
-			logs::info("Worlds: from {} to {}: {}", DescribeWorld(a_origin), DescribeWorld(a_destination),
-				a_other ? "another world, no estimate" : (a_origin && a_destination ? "same coordinates, estimate given" : "not known, estimate given"));
+			logs::info("Worlds: from {} to {}: {}", DescribeWorld(a_origin), DescribeWorld(a_destination), Describe(a_kind));
 		}
 
 		// The world the trip starts in: the player's own when outdoors, otherwise the one the
@@ -657,16 +705,36 @@ namespace FTI::MapMenuHook
 			return a_data ? a_data->worldSpace : nullptr;
 		}
 
-		// True only when both worlds are known and differ.
-		bool IsOtherWorldspace(const RE::TESObjectREFR& a_destination, const RE::MapMenu::RUNTIME_DATA2* a_data)
+		TripPlan PlanTrip(const RE::NiPoint3& a_origin, const RE::TESObjectREFR& a_destination, const RE::MapMenu::RUNTIME_DATA2* a_data)
 		{
-			const auto destinationWorld = a_destination.GetWorldspace();
-			const auto originWorld = OriginWorldspace(a_data);
-			const auto destination = CoordinateWorld(destinationWorld);
-			const auto origin = CoordinateWorld(originWorld);
-			const bool other = destination && origin && destination != origin;
-			LogWorlds(originWorld, destinationWorld, other);
-			return other;
+			TripPlan plan;
+			plan.originWorld = OriginWorldspace(a_data);
+			plan.destinationWorld = a_destination.GetWorldspace();
+			plan.from = a_origin;
+			plan.to = a_destination.GetPosition();
+			plan.fromMap = plan.from;
+			plan.toMap = plan.to;
+
+			// Unknown worlds: measure as given, as before the worldspace checks.
+			if (plan.originWorld && plan.destinationWorld && plan.originWorld != plan.destinationWorld) {
+				const auto origin = PlaceOnMap(plan.originWorld, plan.from);
+				const auto destination = PlaceOnMap(plan.destinationWorld, plan.to);
+				plan.fromMap = origin.pos;
+				plan.toMap = destination.pos;
+				if (origin.map != destination.map) {
+					plan.kind = TripKind::kOtherMap;
+				} else if (destination.scaled) {
+					plan.kind = TripKind::kIntoScaled;
+				} else if (origin.moved || destination.moved) {
+					plan.kind = TripKind::kOnMap;
+					plan.from = origin.pos;
+					plan.to = destination.pos;
+				}
+			} else if (plan.originWorld && plan.originWorld == plan.destinationWorld && PlaceOnMap(plan.originWorld, plan.from).scaled) {
+				plan.kind = TripKind::kIntoScaled;  // within the Vale: not known how the game measures it
+			}
+			LogWorlds(plan.originWorld, plan.destinationWorld, plan.kind);
+			return plan;
 		}
 
 		void ComputeLines(const Settings& settings, const RE::MapMenu::RUNTIME_DATA2& a_data, std::int32_t a_selected, const std::string& a_title)
@@ -690,27 +758,30 @@ namespace FTI::MapMenuHook
 			if (settings.onlyFastTravelMarkers && !extra->mapData->flags.all(RE::MapMarkerData::Flag::kCanTravelTo)) {
 				return;
 			}
-			if (IsOtherWorldspace(*ref, &a_data)) {
-				// No rows and no destPos, so the trip is never used for calibration. The position
-				// is kept only to log what the game charges if the player goes there anyway.
-				g_state.otherWorldPos = ref->GetPosition();
-				g_state.otherWorld = ref->GetWorldspace();
-				g_state.otherWorldTitle = a_title;
-				logs::debug("No estimate for \"{}\": it is in another worldspace", a_title);
-				return;
-			}
 			const auto origin = PlayerOrigin(&a_data);
 			if (!origin) {
 				return;
 			}
-			const auto destination = ref->GetPosition();
-			const auto estimate = Estimator::Get().Estimate(*origin, destination);
+			const auto plan = PlanTrip(*origin, *ref, &a_data);
+			std::optional<TripEstimate> estimate;
+			if (plan.HasEstimate()) {
+				estimate = Estimator::Get().Estimate(plan.from, plan.to);
+			}
+			if (plan.kind != TripKind::kPlain) {
+				// Never used for calibration; kept to log what the game charges if the player goes.
+				g_state.unlearned = UnlearnedTrip{ ref->GetPosition(), plan.destinationWorld, a_title,
+					estimate ? std::optional<double>{ estimate->hours } : std::nullopt };
+			}
 			if (!estimate) {
+				logs::debug("No estimate for \"{}\": {}", a_title, Describe(plan.kind));
 				return;
 			}
 
-			g_state.destPos = destination;
-			g_state.lines.push_back({ settings.travelLabel, FormatDuration(estimate->hours, !estimate->calibrated) });
+			if (plan.kind == TripKind::kPlain) {
+				g_state.destPos = plan.to;
+			}
+			const bool approximate = !estimate->calibrated || plan.kind != TripKind::kPlain;
+			g_state.lines.push_back({ settings.travelLabel, FormatDuration(estimate->hours, approximate) });
 			g_state.lines.push_back({ settings.arrivalLabel, FormatArrival(estimate->hours) });
 			if (settings.showDistance) {
 				g_state.lines.push_back({ settings.distanceLabel, FormatDistance(estimate->distance) });
@@ -725,19 +796,24 @@ namespace FTI::MapMenuHook
 				return;
 			}
 			g_state.tripArmed = true;
-			if (const auto origin = PlayerOrigin(&a_data)) {
-				if (g_state.destPos) {
-					Estimator::Get().ArmTrip(*origin, *g_state.destPos);
-				} else if (g_state.otherWorldPos) {
-					const auto originWorld = OriginWorldspace(&a_data);
-					logs::info("Trip to \"{}\" without an estimate: from ({:.0f}, {:.0f}, {:.0f}) in {} to ({:.0f}, {:.0f}, {:.0f}) in {}",
-						g_state.otherWorldTitle, origin->x, origin->y, origin->z, originWorld ? WorldName(originWorld) : "unknown"s,
-						g_state.otherWorldPos->x, g_state.otherWorldPos->y, g_state.otherWorldPos->z,
-						g_state.otherWorld ? WorldName(g_state.otherWorld) : "unknown"s);
-					Estimator::Get().NoteUnestimatedTrip(*origin, *g_state.otherWorldPos, MapPosition(originWorld, *origin),
-						MapPosition(g_state.otherWorld, *g_state.otherWorldPos), g_state.otherWorldTitle);
-				}
+			const auto origin = PlayerOrigin(&a_data);
+			if (!origin) {
+				return;
 			}
+			if (g_state.destPos) {
+				Estimator::Get().ArmTrip(*origin, *g_state.destPos);
+				return;
+			}
+			if (!g_state.unlearned) {
+				return;
+			}
+			const auto& trip = *g_state.unlearned;
+			const auto  originWorld = OriginWorldspace(&a_data);
+			logs::info("Trip to \"{}\" ({}): from ({:.0f}, {:.0f}, {:.0f}) in {} to ({:.0f}, {:.0f}, {:.0f}) in {}", trip.title,
+				trip.hours ? "estimated from the map positions" : "no estimate", origin->x, origin->y, origin->z,
+				WorldName(originWorld), trip.to.x, trip.to.y, trip.to.z, WorldName(trip.world));
+			Estimator::Get().NoteUnlearnedTrip(*origin, trip.to, PlaceOnMap(originWorld, *origin).pos,
+				PlaceOnMap(trip.world, trip.to).pos, trip.title, trip.hours);
 		}
 
 		void Update(RE::MapMenu* a_menu)
@@ -811,7 +887,7 @@ namespace FTI::MapMenuHook
 				g_state.lines.clear();
 				g_state.staleItems.clear();
 				g_state.destPos.reset();
-				g_state.otherWorldPos.reset();
+				g_state.unlearned.reset();
 				g_state.failedApplies = 0;
 				ComputeLines(*settings, *data, selected, title);
 			} else if (settingsChanged) {
@@ -820,7 +896,7 @@ namespace FTI::MapMenuHook
 				}
 				g_state.lines.clear();
 				g_state.destPos.reset();
-				g_state.otherWorldPos.reset();
+				g_state.unlearned.reset();
 				g_state.failedApplies = 0;
 				ComputeLines(*settings, *data, selected, title);
 			}
@@ -928,20 +1004,21 @@ namespace FTI::MapMenuHook
 				data = menu->GetRuntimeData2();
 			}
 		}
-		if (IsOtherWorldspace(a_destination, data)) {
-			a_out.otherWorldspace = true;
-			return false;
-		}
 		const auto origin = PlayerOrigin(data);
 		if (!origin) {
 			return false;
 		}
-		const auto estimate = Estimator::Get().Estimate(*origin, a_destination.GetPosition());
+		const auto plan = PlanTrip(*origin, a_destination, data);
+		if (!plan.HasEstimate()) {
+			a_out.otherWorldspace = true;
+			return false;
+		}
+		const auto estimate = Estimator::Get().Estimate(plan.from, plan.to);
 		if (!estimate) {
 			return false;
 		}
 		a_out.valid = true;
-		a_out.calibrated = estimate->calibrated;
+		a_out.calibrated = estimate->calibrated && plan.kind == TripKind::kPlain;
 		a_out.hours = estimate->hours;
 		a_out.distance = estimate->distance;
 		a_out.speedMult = GetFastTravelSpeedMult();
