@@ -4,7 +4,6 @@ namespace FTTI_API
 {
 	struct TripInfo;
 	struct FlyoutStyle;
-	struct FlyoutText;
 }
 
 namespace FTI::MapMenuHook
@@ -18,7 +17,4 @@ namespace FTI::MapMenuHook
 
 	// The flyout's colours as last read from the map, and the background settings.
 	bool GetFlyoutStyle(FTTI_API::FlyoutStyle& a_out);
-
-	// The flyout's font, text sizes and shadow as last read from the map.
-	bool GetFlyoutText(FTTI_API::FlyoutText& a_out);
 }

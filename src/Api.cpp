@@ -73,19 +73,16 @@ namespace FTI::Api
 			}
 		}
 
+		// No longer measured since 0.3.5 (the planner reads the flyout's look itself): always
+		// "unknown". Kept so the interface keeps its shape for any planner that asks.
 		bool GetFlyoutText(FTTI_API::FlyoutText* a_out, std::uint32_t a_size)
 		{
 			if (!a_out || a_size == 0) {
 				return false;
 			}
-			FTTI_API::FlyoutText text;
-			try {
-				MapMenuHook::GetFlyoutText(text);
-			} catch (...) {
-				text = FTTI_API::FlyoutText{};
-			}
+			const FTTI_API::FlyoutText text{};
 			std::memcpy(a_out, &text, (std::min)(static_cast<std::size_t>(a_size), sizeof(text)));
-			return text.known;
+			return false;
 		}
 
 				std::uint32_t FormatArrivalText(double a_hoursFromNow, char* a_buffer, std::uint32_t a_size)

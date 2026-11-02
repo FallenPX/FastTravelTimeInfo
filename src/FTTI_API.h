@@ -52,6 +52,8 @@ namespace FTTI_API
 
 	// How the flyout's text is drawn: font, on-screen size and shadow (version 3). Only ever
 	// add members at the end: GetFlyoutText copies no more than the caller's size.
+	// Fast Travel Time Info 0.3.5 and later no longer measure this (the planner reads the
+	// flyout's look itself): known is always false.
 	struct FlyoutText
 	{
 		bool          known{ false };            // read from the flyout this session
@@ -95,8 +97,8 @@ namespace FTTI_API
 
 		// ---- Version 3 ----
 
-		// The flyout's font, text sizes and shadow, read from the map while the game runs.
-		// a_size is sizeof(FlyoutText) on the caller's side. Returns a_out->known.
+		// The flyout's font, text sizes and shadow. Since 0.3.5 always "unknown" (see
+		// FlyoutText). a_size is sizeof(FlyoutText) on the caller's side. Returns a_out->known.
 		bool (*GetFlyoutText)(FlyoutText* a_out, std::uint32_t a_size);
 	};
 }

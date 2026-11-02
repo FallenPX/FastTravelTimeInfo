@@ -49,10 +49,8 @@ namespace FTI::MapMenuHook
 			std::uint32_t               settingsVersion{ 0 };
 			int                         failedApplies{ 0 };
 			bool                        tripArmed{ false };
-			int                         lookReads{ 0 };       // attempts to read the flyout's look this map opening
+			int                         lookReads{ 0 };       // attempts to read the flyout's colours this map opening
 			bool                        lookComplete{ false };
-			double                      lookUnits{ 0.0 };     // the flyout's scale, and since when it has been that
-			std::chrono::steady_clock::time_point lookUnitsSince{};
 			bool                        warnedNoDescription{ false };
 			bool                        warnedNoBackground{ false };
 
@@ -158,11 +156,11 @@ namespace FTI::MapMenuHook
 			return std::isfinite(a_out);
 		}
 
-		// ---- Flyout look, for Fast Travel Arrival Planner's panel
+		// ---- Flyout colours, for Fast Travel Arrival Planner
 		//
-		// The interface mod (vanilla, SkyUI, Dear Diary...) decides how the flyout's text looks, so
-		// it is read from the flyout itself: colours, font, on-screen size and shadow. Read once
-		// per map opening (until a row has been seen), and logged whenever it changes.
+		// The interface mod (vanilla, SkyUI, Dear Diary...) decides the flyout's colours, so they
+		// are read from the flyout itself, once per map opening (until a row has been seen), and
+		// logged whenever they change. The planner reads the rest of the flyout's look itself.
 
 		struct FlyoutColors
 		{
@@ -173,31 +171,8 @@ namespace FTI::MapMenuHook
 			bool operator==(const FlyoutColors&) const = default;
 		};
 
-		struct TextShadow
-		{
-			std::uint32_t color{ 0 };
-			double        alpha{ 0.0 };
-			double        distance{ 0.0 };  // screen pixels
-			double        angle{ 45.0 };    // degrees, 0 = right, 90 = down
-			double        blur{ 0.0 };      // screen pixels
-		};
-
-		struct TextInfo
-		{
-			std::string               font;      // face, after the game's font configuration
-			std::string               fontAsSet;  // as the flyout names it, e.g. "$EverywhereMediumFont"
-			double                    sizePx{ 0.0 };  // line height on screen (what ImGui calls the font size)
-			double                    units{ 0.0 };   // screen pixels per text unit when measured
-			bool                      shadowKnown{ false };
-			std::optional<TextShadow> shadow;
-			std::string               how;           // how the size was worked out (log)
-			std::string               shadowSource;  // where the shadow was read (log)
-		};
-
-		std::mutex              g_lookLock;  // guards the three below
-		FlyoutColors            g_colors;
-		std::optional<TextInfo> g_titleText;
-		std::optional<TextInfo> g_rowText;
+		std::mutex   g_lookLock;  // guards g_colors
+		FlyoutColors g_colors;
 
 		std::optional<std::uint32_t> ReadColor(const RE::GFxValue& a_textField)
 		{
@@ -208,375 +183,18 @@ namespace FTI::MapMenuHook
 			return std::nullopt;
 		}
 
-		// Interface\fontconfig.txt maps the names the menus use ("$EverywhereMediumFont") to font
-		// faces in the font libraries. Interface mods that change the font change this file.
-		const std::map<std::string, std::string>& FontConfig()
+		// Returns true once the title's and a row's colours have been read.
+		bool ReadFlyoutColors(const RE::GFxValue& a_description)
 		{
-			static std::map<std::string, std::string> map;  // lower-case "$name" -> face
-			static std::once_flag                     once;
-			std::call_once(once, [] {
-				RE::BSResourceNiBinaryStream stream("Interface/fontconfig.txt");
-				if (!stream.good()) {
-					logs::info("Interface\\fontconfig.txt not found; font names are used as the flyout gives them");
-					return;
-				}
-				std::string text;  // a small text file: read it character by character
-				for (char c = 0; text.size() < 256 * 1024 && stream.read(&c, 1);) {
-					text.push_back(c);
-				}
-				std::istringstream lines{ text };
-				for (std::string line; std::getline(lines, line);) {
-					const auto start = line.find_first_not_of(" \t");
-					if (start == std::string::npos || line.compare(start, 3, "map") != 0) {
-						continue;
-					}
-					std::vector<std::string> quoted;
-					for (auto open = line.find('"'); open != std::string::npos && quoted.size() < 2; open = line.find('"', open + 1)) {
-						const auto close = line.find('"', open + 1);
-						if (close == std::string::npos) {
-							break;
-						}
-						quoted.push_back(line.substr(open + 1, close - open - 1));
-						open = close;
-					}
-					if (quoted.size() == 2 && !quoted[0].empty() && !quoted[1].empty()) {
-						auto key = quoted[0];
-						std::ranges::transform(key, key.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-						map[key] = quoted[1];
-					}
-				}
-			});
-			return map;
-		}
-
-		std::string ResolveFont(const std::string& a_name)
-		{
-			if (a_name.empty() || a_name.front() != '$') {
-				return a_name;
-			}
-			auto key = a_name;
-			std::ranges::transform(key, key.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			const auto& map = FontConfig();
-			const auto  it = map.find(key);
-			return it != map.end() ? it->second : a_name;
-		}
-
-		// Stage (the movie's own pixels) to screen pixels. The game scales its menus to fit the
-		// screen keeping their proportions, so the smaller of the two ratios applies. Measured
-		// from the movie's own size and the game's screen size; the movie's viewport and visible
-		// area are logged alongside, as a cross-check.
-		double MovieToScreen(RE::GFxMovieView* a_movie, std::string& a_how)
-		{
-			double stageW = 0.0;
-			double stageH = 0.0;
-			if (const auto def = a_movie->GetMovieDef()) {
-				stageW = def->GetWidth();
-				stageH = def->GetHeight();
-			}
-			double screenW = 0.0;
-			double screenH = 0.0;
-			if (const auto state = RE::BSGraphics::State::GetSingleton()) {
-				screenW = state->screenWidth;
-				screenH = state->screenHeight;
-			}
-			RE::GViewport viewport;
-			a_movie->GetViewport(&viewport);
-			const auto visible = a_movie->GetVisibleFrameRect();
-			const double visibleW = static_cast<double>(visible.right) - visible.left;
-			const double visibleH = static_cast<double>(visible.bottom) - visible.top;
-			if (screenW <= 0.0 || screenH <= 0.0) {  // fall back on the movie's viewport
-				screenW = viewport.width;
-				screenH = viewport.height;
-			}
-
-			double scale = 0.0;
-			if (stageW > 0.0 && stageH > 0.0 && screenW > 0.0 && screenH > 0.0) {
-				scale = (std::min)(screenW / stageW, screenH / stageH);
-			} else if (visibleH > 0.0 && screenH > 0.0) {
-				scale = screenH / visibleH;
-			}
-			if (!(scale > 0.05 && scale < 20.0)) {
-				scale = 1.0;
-			}
-			a_how = std::format("movie {:.0f} x {:.0f} on screen {:.0f} x {:.0f} = x{:.2f} (viewport {} x {}, visible area {:.0f} x {:.0f})",
-				stageW, stageH, screenW, screenH, scale, viewport.width, viewport.height, visibleW, visibleH);
-			return scale;
-		}
-
-		// How much one unit inside a text field measures on the stage: the scale of everything
-		// it sits in, and its own. Two ways of reading the scale of what it sits in, the second
-		// for when the first gives nothing.
-		double StageUnits(RE::GFxMovieView* a_movie, const RE::GFxValue& a_field, std::string& a_how)
-		{
-			double       toStage = 0.0;
-			const char*  method = "unknown, taken as x1";
-			RE::GFxValue parent;
-			if (GetMember(a_field, "_parent", parent) && parent.IsDisplayObject()) {
-				RE::GFxValue top;
-				RE::GFxValue bottom;
-				a_movie->CreateObject(&top);
-				a_movie->CreateObject(&bottom);
-				top.SetMember("x", RE::GFxValue(0.0));
-				top.SetMember("y", RE::GFxValue(0.0));
-				bottom.SetMember("x", RE::GFxValue(0.0));
-				bottom.SetMember("y", RE::GFxValue(100.0));
-				double y0 = 0.0;
-				double y1 = 0.0;
-				if (parent.Invoke("localToGlobal", nullptr, &top, 1) && parent.Invoke("localToGlobal", nullptr, &bottom, 1) &&
-					GetNumber(top, "y", y0) && GetNumber(bottom, "y", y1) && y1 > y0) {
-					toStage = (y1 - y0) / 100.0;
-					method = "localToGlobal";
-				}
-				if (!(toStage > 0.0)) {
-					// The parent's height on the stage against its own height.
-					RE::GFxValue root;
-					RE::GFxValue onStage;
-					RE::GFxValue own;
-					double       a0 = 0.0, a1 = 0.0, b0 = 0.0, b1 = 0.0;
-					if (a_movie->GetVariable(&root, "_root") && parent.Invoke("getBounds", &onStage, &root, 1) &&
-						parent.Invoke("getBounds", &own, &parent, 1) && GetNumber(onStage, "yMin", a0) && GetNumber(onStage, "yMax", a1) &&
-						GetNumber(own, "yMin", b0) && GetNumber(own, "yMax", b1) && b1 > b0 && a1 > a0) {
-						toStage = (a1 - a0) / (b1 - b0);
-						method = "getBounds";
-					}
-				}
-			}
-			if (!(toStage > 0.01 && toStage < 100.0)) {
-				toStage = 1.0;
-			}
-			double fieldScale = 100.0;
-			GetNumber(a_field, "_yscale", fieldScale);
-			a_how = std::format("parent x{:.2f} ({}), field x{:.2f}", toStage, method, fieldScale / 100.0);
-			return toStage * (fieldScale / 100.0);
-		}
-
-		struct ShadowRead
-		{
-			bool                      known{ false };  // the flyout said whether its text has a shadow
-			std::optional<TextShadow> shadow;
-			std::string               source;          // for the log
-		};
-
-		// A drop shadow or glow, searched for in the text's filters and those of everything it
-		// sits in, then in Scaleform's text-shadow properties. Many interfaces draw the shadow in
-		// a way none of these report (an empty filter list proves nothing), so "not found" means
-		// "not known", never "no shadow".
-		ShadowRead ReadShadow(const RE::GFxValue& a_field, double a_units)
-		{
-			ShadowRead   result;
-			RE::GFxValue owner = a_field;
-			for (int level = 0; level < 8 && owner.IsObject(); ++level) {
-				RE::GFxValue filters;
-				if (GetMember(owner, "filters", filters) && filters.IsArray()) {
-					for (std::uint32_t i = 0; i < filters.GetArraySize(); ++i) {
-						RE::GFxValue filter;
-						double       color = 0.0;
-						double       alpha = 0.0;
-						if (!filters.GetElement(i, &filter) || !GetNumber(filter, "color", color) || !GetNumber(filter, "alpha", alpha)) {
-							continue;
-						}
-						TextShadow shadow;
-						shadow.color = static_cast<std::uint32_t>(color) & 0xFFFFFFu;
-						shadow.alpha = std::clamp(alpha, 0.0, 1.0);
-						double value = 0.0;
-						if (GetNumber(filter, "distance", value)) {
-							shadow.distance = value * a_units;
-						}
-						if (GetNumber(filter, "angle", value)) {
-							shadow.angle = value;
-						}
-						if (GetNumber(filter, "blurX", value)) {
-							shadow.blur = value * a_units;
-						}
-						result.known = true;
-						result.shadow = shadow;
-						result.source = level == 0 ? "the text's filters"s : std::format("filters {} level(s) up", level);
-						return result;
-					}
-				}
-				RE::GFxValue parent;
-				if (!GetMember(owner, "_parent", parent) || !parent.IsDisplayObject()) {
-					break;
-				}
-				owner = parent;
-			}
-			// Scaleform's text-shadow properties.
-			double alpha = 0.0;
-			double distance = 0.0;
-			if (GetNumber(a_field, "shadowAlpha", alpha) && alpha > 0.0 && GetNumber(a_field, "shadowDistance", distance)) {
-				TextShadow shadow;
-				double     value = 0.0;
-				if (GetNumber(a_field, "shadowColor", value)) {
-					shadow.color = static_cast<std::uint32_t>(value) & 0xFFFFFFu;
-				}
-				shadow.alpha = std::clamp(alpha, 0.0, 1.0);
-				shadow.distance = distance * a_units;
-				if (GetNumber(a_field, "shadowAngle", value)) {
-					shadow.angle = value;
-				}
-				if (GetNumber(a_field, "shadowBlurX", value)) {
-					shadow.blur = value * a_units;
-				}
-				result.known = true;
-				result.shadow = shadow;
-				result.source = "Scaleform's text-shadow properties";
-				return result;
-			}
-			// Scaleform's text shadow style, e.g. shadowStyle = "s{1,1}t{0,0}" (offsets in pixels).
-			RE::GFxValue style;
-			if (GetMember(a_field, "shadowStyle", style) && style.IsString() && style.GetString() && *style.GetString()) {
-				const std::string text = style.GetString();
-				const auto        mark = text.find('s');
-				const auto        open = mark == std::string::npos ? std::string::npos : text.find('{', mark);
-				const auto        close = open == std::string::npos ? std::string::npos : text.find('}', open);
-				double            x = 0.0;
-				double            y = 0.0;
-				if (close != std::string::npos &&
-					std::sscanf(text.substr(open + 1, close - open - 1).c_str(), "%lf,%lf", &x, &y) == 2 && (x != 0.0 || y != 0.0)) {
-					TextShadow shadow;
-					if (double c = 0.0; GetNumber(a_field, "shadowColor", c)) {
-						shadow.color = static_cast<std::uint32_t>(c) & 0xFFFFFFu;
-					}
-					shadow.alpha = 0.85;
-					shadow.distance = std::hypot(x, y) * a_units;
-					shadow.angle = std::atan2(y, x) * 180.0 / 3.14159265358979;
-					result.known = true;
-					result.shadow = shadow;
-					result.source = std::format("Scaleform text shadow \"{}\"", text);
-					return result;
-				}
-			}
-			result.source = "not found (the interface may draw it in a way that cannot be read)";
-			return result;
-		}
-
-		std::optional<TextInfo> ReadTextInfo(RE::GFxMovieView* a_movie, const RE::GFxValue& a_field)
-		{
-			RE::GFxValue format;
-			if (!a_field.IsObject() || !const_cast<RE::GFxValue&>(a_field).Invoke("getTextFormat", &format) || !format.IsObject()) {
-				return std::nullopt;
-			}
-			TextInfo     info;
-			RE::GFxValue font;
-			if (GetMember(format, "font", font) && font.IsString() && font.GetString()) {
-				info.fontAsSet = font.GetString();
-				info.font = ResolveFont(info.fontAsSet);
-			}
-			std::string  screenHow;
-			std::string  stageHow;
-			const double toScreen = MovieToScreen(a_movie, screenHow);
-			const double stage = StageUnits(a_movie, a_field, stageHow);
-			// ImGui sizes a font by its line height (ascent + descent), Flash by its em size, so
-			// the line height is what matches: the field's text height for one line, or 1.2 em.
-			double size = 0.0;
-			double textHeight = 0.0;
-			GetNumber(format, "size", size);
-			GetNumber(a_field, "textHeight", textHeight);
-			double line = 0.0;
-			if (size > 0.0) {
-				line = textHeight >= size && textHeight <= size * 1.6 ? textHeight : size * 1.2;
-			}
-			info.units = stage * toScreen;
-			info.sizePx = line * info.units;
-			info.how = std::format("text size {:.1f}, line {:.1f}; {}; {}", size, textHeight, stageHow, screenHow);
-			const auto shadow = ReadShadow(a_field, stage * toScreen);
-			info.shadowKnown = shadow.known;
-			info.shadow = shadow.shadow;
-			info.shadowSource = shadow.source;
-			return info;
-		}
-
-		std::string DescribeText(const std::optional<TextInfo>& a_info)
-		{
-			if (!a_info) {
-				return "unknown";
-			}
-			auto text = std::format("\"{}\"", a_info->font);
-			if (!a_info->fontAsSet.empty() && a_info->fontAsSet != a_info->font) {
-				text += std::format(" ({})", a_info->fontAsSet);
-			}
-			text += std::format(" {:.1f} px [{}]", a_info->sizePx, a_info->how);
-			if (const auto& s = a_info->shadow) {
-				text += std::format(", shadow #{:06X} {:.0f}% {:.1f} px at {:.0f} deg, blur {:.1f} px (from {})", s->color, s->alpha * 100.0,
-					s->distance, s->angle, s->blur, a_info->shadowSource);
-			} else {
-				text += a_info->shadowKnown ? ", no shadow"s : std::format(", shadow {}", a_info->shadowSource);
-			}
-			return text;
-		}
-
-		bool SameText(const std::optional<TextInfo>& a, const std::optional<TextInfo>& b)
-		{
-			if (a.has_value() != b.has_value()) {
-				return false;
-			}
-			if (!a) {
-				return true;
-			}
-			return a->font == b->font && std::abs(a->sizePx - b->sizePx) < 0.5 && a->shadow.has_value() == b->shadow.has_value() &&
-			       a->shadowKnown == b->shadowKnown;
-		}
-
-		// What the flyout is made of, once per session: what its title sits in (with the number of
-		// filters on each level) and the flyout's parts. Shows where an interface mod puts its text
-		// shadow when it is not a filter FTTI can read.
-		void LogFlyoutStructure(const RE::GFxValue& a_description)
-		{
-			static std::atomic<bool> logged{ false };
-			if (logged.exchange(true)) {
-				return;
-			}
-			std::string  chain;
-			RE::GFxValue owner;
-			GetMember(a_description, "Title", owner);
-			for (int level = 0; level < 8 && owner.IsObject(); ++level) {
-				RE::GFxValue      name;
-				RE::GFxValue      filters;
-				const std::string n = GetMember(owner, "_name", name) && name.IsString() && name.GetString() ? name.GetString() : "?";
-				const auto        count = GetMember(owner, "filters", filters) && filters.IsArray() ? std::format("{}", filters.GetArraySize()) : "-"s;
-				chain += std::format("{}{} [filters {}]", chain.empty() ? "" : " < ", n, count);
-				RE::GFxValue parent;
-				if (!GetMember(owner, "_parent", parent) || !parent.IsDisplayObject()) {
-					break;
-				}
-				owner = parent;
-			}
-			std::string parts;
-			int         count = 0;
-			a_description.VisitMembers([&](const char* a_name, const RE::GFxValue& a_value) {
-				if (!a_name || !a_value.IsDisplayObject() || ++count > 40) {
-					return;
-				}
-				RE::GFxValue color;
-				RE::GFxValue filters;
-				const bool   isText = GetMember(a_value, "textColor", color) && color.IsNumber();
-				const auto   f = GetMember(a_value, "filters", filters) && filters.IsArray() ? filters.GetArraySize() : 0u;
-				parts += std::format("{}{}{}{}", parts.empty() ? "" : ", ", a_name,
-					isText ? std::format(" (text #{:06X})", static_cast<std::uint32_t>(color.GetNumber()) & 0xFFFFFFu) : ""s,
-					f ? std::format(" [filters {}]", f) : ""s);
-			});
-			logs::info("Flyout structure: title in {}; parts: {}", chain, parts.empty() ? "none listed"s : parts);
-		}
-
-		// Returns true once both the title and a row have been read at a steady size. The flyout
-		// grows into place when it appears (from 20 %, in steps that each last two or more game
-		// frames), so a size counts only once it has stayed the same for a fifth of a second.
-		bool ReadFlyoutLook(RE::GFxMovieView* a_movie, const RE::GFxValue& a_description, double& a_lastUnits,
-			std::chrono::steady_clock::time_point& a_unitsSince)
-		{
-			LogFlyoutStructure(a_description);
-			FlyoutColors            colors;
-			std::optional<TextInfo> titleText;
-			std::optional<TextInfo> rowText;
-			RE::GFxValue            title;
+			FlyoutColors colors;
+			RE::GFxValue title;
 			if (GetMember(a_description, "Title", title)) {
 				colors.title = ReadColor(title);
-				titleText = ReadTextInfo(a_movie, title);
 			}
 			RE::GFxValue list;
 			if (GetMember(a_description, "DescriptionList", list) && list.IsArray()) {
 				const auto size = list.GetArraySize();
-				for (std::uint32_t i = 0; i < size && !rowText; ++i) {
+				for (std::uint32_t i = 0; i < size && !colors.label; ++i) {
 					RE::GFxValue entry;
 					RE::GFxValue visible;
 					if (!list.GetElement(i, &entry) || !GetMember(entry, "_visible", visible) || !visible.IsBool() || !visible.GetBool()) {
@@ -585,26 +203,14 @@ namespace FTI::MapMenuHook
 					RE::GFxValue field;
 					if (GetMember(entry, "Item", field)) {
 						colors.label = ReadColor(field);
-						rowText = ReadTextInfo(a_movie, field);
 					}
 					if (GetMember(entry, "Value", field)) {
 						colors.value = ReadColor(field);
 					}
 				}
 			}
-			if (!colors.title && !colors.label && !colors.value && !titleText && !rowText) {
+			if (!colors.title && !colors.label && !colors.value) {
 				return false;
-			}
-			const double units = titleText ? titleText->units : 0.0;
-			const auto   now = std::chrono::steady_clock::now();
-			if (std::abs(units - a_lastUnits) > (std::max)(units, a_lastUnits) * 0.005) {
-				a_lastUnits = units;
-				a_unitsSince = now;
-			}
-			const bool steady = units > 0.0 && now - a_unitsSince >= std::chrono::milliseconds(200);
-			if (!steady) {
-				titleText.reset();  // still growing: colours only this time
-				rowText.reset();
 			}
 
 			std::lock_guard guard{ g_lookLock };
@@ -615,25 +221,13 @@ namespace FTI::MapMenuHook
 			if (!colors.value) {
 				colors.value = g_colors.value;
 			}
-			if (!rowText) {
-				rowText = g_rowText;
-			}
-			if (!titleText) {
-				titleText = g_titleText;
-			}
 			if (!(colors == g_colors)) {
 				g_colors = colors;
 				const auto hex = [](const std::optional<std::uint32_t>& a) { return a ? std::format("#{:06X}", *a) : "unknown"s; };
 				logs::info("Flyout colours: title {}, labels {}, values {}", hex(colors.title), hex(colors.label), hex(colors.value));
 			}
-			if (!SameText(titleText, g_titleText) || !SameText(rowText, g_rowText)) {
-				g_titleText = titleText;
-				g_rowText = rowText;
-				logs::info("Flyout text: title {}; rows {}", DescribeText(titleText), DescribeText(rowText));
-			}
-			return steady && titleText.has_value() && rowText.has_value();
+			return colors.title && colors.label && colors.value;
 		}
-
 
 		// Re-stacks the flyout's title and visible rows with a custom line spacing.
 		// Mirrors the vanilla Map.MarkerDescription.SetDescription layout: each element is
@@ -1384,7 +978,7 @@ namespace FTI::MapMenuHook
 
 			if (!g_state.lookComplete && g_state.lookReads < 3000) {
 				++g_state.lookReads;
-				g_state.lookComplete = ReadFlyoutLook(movie, description, g_state.lookUnits, g_state.lookUnitsSince);
+				g_state.lookComplete = ReadFlyoutColors(description);
 			}
 
 			// Compare what the flyout shows with what it should show.
@@ -1534,39 +1128,6 @@ namespace FTI::MapMenuHook
 		}
 		a_out.colorsKnown = g_colors.title.has_value() || g_colors.label.has_value() || g_colors.value.has_value();
 		return a_out.colorsKnown;
-	}
-
-	bool GetFlyoutText(FTTI_API::FlyoutText& a_out)
-	{
-		a_out = FTTI_API::FlyoutText{};
-		const auto copy = [](char* a_dst, std::size_t a_size, const std::string& a_src) {
-			const auto length = (std::min)(a_src.size(), a_size - 1);
-			std::memcpy(a_dst, a_src.data(), length);
-			a_dst[length] = '\0';
-		};
-		std::lock_guard guard{ g_lookLock };
-		if (g_titleText) {
-			copy(a_out.titleFont, sizeof(a_out.titleFont), g_titleText->font);
-			a_out.titleSize = static_cast<float>(g_titleText->sizePx);
-		}
-		const auto& row = g_rowText ? g_rowText : g_titleText;
-		if (row) {
-			copy(a_out.rowFont, sizeof(a_out.rowFont), row->font);
-			a_out.rowSize = static_cast<float>(row->sizePx);
-		}
-		const auto& shadowSource = g_titleText && g_titleText->shadow ? g_titleText : row;
-		a_out.shadowKnown = (g_titleText && g_titleText->shadowKnown) || (row && row->shadowKnown);
-		if (shadowSource && shadowSource->shadow) {
-			const auto& shadow = *shadowSource->shadow;
-			a_out.shadow = true;
-			a_out.shadowColor = shadow.color;
-			a_out.shadowAlpha = static_cast<float>(shadow.alpha);
-			a_out.shadowDistance = static_cast<float>(shadow.distance);
-			a_out.shadowAngle = static_cast<float>(shadow.angle);
-			a_out.shadowBlur = static_cast<float>(shadow.blur);
-		}
-		a_out.known = g_titleText.has_value() || g_rowText.has_value();
-		return a_out.known;
 	}
 
 	void Install()

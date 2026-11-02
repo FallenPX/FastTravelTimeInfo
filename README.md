@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.3.5**: Leaner: FTTI no longer measures the flyout's font, text sizes and text shadow, which only Fast Travel Arrival Planner's old SKSE Menu Framework panel used (the planner reads the flyout's look itself since its 0.2.0). The *Flyout text* and *Flyout structure* log lines are gone with it. The flyout's colours and the background settings are still passed to the planner. Nothing changes on screen.
 - **0.3.4**: Tooltips on the settings page in SKSE Menu Framework wrap at half the page's width, so a long one never runs off the screen.
 - **0.3.3**: Log only: once per session, the log describes how the map's flyout is built (*Flyout structure: ...*), to find where an interface mod draws its text shadow.
 - **0.3.2**: For Fast Travel Arrival Planner: the flyout's text is measured only once it has finished growing into place (0.3.1 measured it at 20 % of its size), and by its line height, which is how the planner's panel sizes fonts. The text shadow is searched for in everything the flyout sits in; when it cannot be found, FTTI says it could not tell instead of reporting no shadow.
