@@ -118,6 +118,7 @@ powershell -ExecutionPolicy Bypass -File tools\package.ps1
 
 ## Changelog
 
+- **0.3.3**: Log only: once per session, the log describes how the map's flyout is built (*Flyout structure: ...*), to find where an interface mod draws its text shadow.
 - **0.3.2**: For Fast Travel Arrival Planner: the flyout's text is measured only once it has finished growing into place (0.3.1 measured it at 20 % of its size), and by its line height, which is how the planner's panel sizes fonts. The text shadow is searched for in everything the flyout sits in; when it cannot be found, FTTI says it could not tell instead of reporting no shadow.
 - **0.3.1**: For Fast Travel Arrival Planner: the flyout's text size on screen is now measured against the game's screen size (0.3.0 could come out far too small), the text shadow is also read from Scaleform's own text shadow, and FTTI says when it could not read a shadow at all. The *Flyout text* log line shows every step of the measurement.
 - **0.3.0**: For Fast Travel Arrival Planner 0.0.10: FTTI also tells the planner the flyout's font (after the game's font configuration), its text sizes on screen and its text shadow, so the planner's panel can match any interface mod. The log records them (*Flyout text: ...*). Nothing changes on screen.

@@ -517,12 +517,54 @@ namespace FTI::MapMenuHook
 			       a->shadowKnown == b->shadowKnown;
 		}
 
+		// What the flyout is made of, once per session: what its title sits in (with the number of
+		// filters on each level) and the flyout's parts. Shows where an interface mod puts its text
+		// shadow when it is not a filter FTTI can read.
+		void LogFlyoutStructure(const RE::GFxValue& a_description)
+		{
+			static std::atomic<bool> logged{ false };
+			if (logged.exchange(true)) {
+				return;
+			}
+			std::string  chain;
+			RE::GFxValue owner;
+			GetMember(a_description, "Title", owner);
+			for (int level = 0; level < 8 && owner.IsObject(); ++level) {
+				RE::GFxValue      name;
+				RE::GFxValue      filters;
+				const std::string n = GetMember(owner, "_name", name) && name.IsString() && name.GetString() ? name.GetString() : "?";
+				const auto        count = GetMember(owner, "filters", filters) && filters.IsArray() ? std::format("{}", filters.GetArraySize()) : "-"s;
+				chain += std::format("{}{} [filters {}]", chain.empty() ? "" : " < ", n, count);
+				RE::GFxValue parent;
+				if (!GetMember(owner, "_parent", parent) || !parent.IsDisplayObject()) {
+					break;
+				}
+				owner = parent;
+			}
+			std::string parts;
+			int         count = 0;
+			a_description.VisitMembers([&](const char* a_name, const RE::GFxValue& a_value) {
+				if (!a_name || !a_value.IsDisplayObject() || ++count > 40) {
+					return;
+				}
+				RE::GFxValue color;
+				RE::GFxValue filters;
+				const bool   isText = GetMember(a_value, "textColor", color) && color.IsNumber();
+				const auto   f = GetMember(a_value, "filters", filters) && filters.IsArray() ? filters.GetArraySize() : 0u;
+				parts += std::format("{}{}{}{}", parts.empty() ? "" : ", ", a_name,
+					isText ? std::format(" (text #{:06X})", static_cast<std::uint32_t>(color.GetNumber()) & 0xFFFFFFu) : ""s,
+					f ? std::format(" [filters {}]", f) : ""s);
+			});
+			logs::info("Flyout structure: title in {}; parts: {}", chain, parts.empty() ? "none listed"s : parts);
+		}
+
 		// Returns true once both the title and a row have been read at a steady size. The flyout
 		// grows into place when it appears (from 20 %, in steps that each last two or more game
 		// frames), so a size counts only once it has stayed the same for a fifth of a second.
 		bool ReadFlyoutLook(RE::GFxMovieView* a_movie, const RE::GFxValue& a_description, double& a_lastUnits,
 			std::chrono::steady_clock::time_point& a_unitsSince)
 		{
+			LogFlyoutStructure(a_description);
 			FlyoutColors            colors;
 			std::optional<TextInfo> titleText;
 			std::optional<TextInfo> rowText;
