@@ -106,10 +106,23 @@ namespace FTI::Menu
 			}
 		}
 
+		// Lines wrap at half the width of the settings page, so a long tooltip never runs off
+		// the screen.
 		void Tooltip(const char* a_text)
 		{
-			if (ImGuiMCP::IsItemHovered()) {
-				ImGuiMCP::SetTooltip("%s", a_text);
+			if (!ImGuiMCP::IsItemHovered()) {
+				return;
+			}
+			float width = ImGuiMCP::GetWindowWidth() * 0.5f;
+			if (const auto io = ImGuiMCP::GetIO(); io && io->DisplaySize.x > 0.0f) {
+				width = (std::min)(width, io->DisplaySize.x * 0.45f);
+			}
+			width = (std::max)(width, ImGuiMCP::GetFontSize() * 12.0f);
+			if (ImGuiMCP::BeginTooltip()) {
+				ImGuiMCP::PushTextWrapPos(width);
+				ImGuiMCP::TextUnformatted(a_text);
+				ImGuiMCP::PopTextWrapPos();
+				ImGuiMCP::EndTooltip();
 			}
 		}
 
