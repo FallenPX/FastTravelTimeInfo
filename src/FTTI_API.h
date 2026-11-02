@@ -57,7 +57,7 @@ namespace FTTI_API
 		bool          known{ false };            // read from the flyout this session
 		char          titleFont[64]{};           // font face after the game's font configuration ("" = unknown)
 		char          rowFont[64]{};
-		float         titleSize{ 0.0f };         // font size in screen pixels (0 = unknown)
+		float         titleSize{ 0.0f };         // line height in screen pixels, which is how ImGui sizes fonts (0 = unknown)
 		float         rowSize{ 0.0f };
 		bool          shadow{ false };           // the text has a drop shadow or glow
 		std::uint32_t shadowColor{ 0x000000 };   // 0xRRGGBB
@@ -65,7 +65,7 @@ namespace FTTI_API
 		float         shadowDistance{ 0.0f };    // screen pixels (0 = a glow around the text)
 		float         shadowAngle{ 45.0f };      // degrees: 0 = right, 90 = down
 		float         shadowBlur{ 0.0f };        // screen pixels
-		bool          shadowKnown{ false };      // FTTI 0.3.1+: the flyout told whether its text has a shadow
+		bool          shadowKnown{ false };      // FTTI 0.3.1+: a shadow was found (0.3.2+: false means "could not tell")
 	};
 
 	struct Interface
